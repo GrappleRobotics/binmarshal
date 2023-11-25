@@ -312,7 +312,12 @@ pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
       match st.fields {
         Fields::Unnamed(fields) => {
           let field = &fields.unnamed[0];
+          let mut extra_default = vec![];
           let mut extra_clone = vec![];
+
+          for (_, _) in fields.unnamed.iter().enumerate().skip(1) {
+            extra_default.push(quote! { Default::default() });
+          }
 
           for (i, _) in fields.unnamed.iter().enumerate().skip(1) {
             let i = syn::Index::from(i);
@@ -342,6 +347,12 @@ pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
           };
 
           let out = quote! {
+            impl #generics From<#ft> for #ident #ident_generics {
+              fn from(inner: #ft) -> Self {
+                Self(inner, #(#extra_default),*)
+              }
+            }
+
             impl #generics Deref for #ident #ident_generics {
               type Target = #ft;
 
