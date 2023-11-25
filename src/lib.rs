@@ -7,37 +7,41 @@ extern crate alloc;
 use core::{ops::{Deref, DerefMut}, mem::MaybeUninit, marker::PhantomData};
 
 use alloc::vec::Vec;
-use binmarshal_macros::Proxy;
 use rw::{BitView, BitWriter};
 
+pub use binmarshal_macros::{BinMarshal, Context, Proxy};
+
 pub mod rw;
+
+// See: https://github.com/rust-lang/rust/issues/86935
+pub type SelfType<T> = T;
+pub trait BinmarshalContext {
+  type MutableComplement<'a>;
+}
+
+impl BinmarshalContext for () {
+  type MutableComplement<'a> = ();
+}
 
 #[derive(Clone)]
 pub struct BitSpecification<const BITS: usize>;
 
-pub trait BinMarshal<Context = ()> : Sized {
+impl<const BITS: usize> BinmarshalContext for BitSpecification<BITS> {
+  type MutableComplement<'a> = ();
+}
+
+pub trait BinMarshal<Context = ()> : Sized where Context: BinmarshalContext {
+  type Context: BinmarshalContext;
+
   fn write<W: BitWriter>(self, writer: &mut W, ctx: Context) -> bool;
   fn read(view: &mut BitView<'_>, ctx: Context) -> Option<Self>;
+  fn update<'a>(&'a mut self, ctx: <Context as BinmarshalContext>::MutableComplement<'a>);
 }
 
-impl<const N: usize> BinMarshal<()> for Buffer<N> {
-  fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
-    writer.align(1);
-    if let Some((arr, _offset)) = writer.reserve_and_advance::<N>(N, 0) {
-      arr.copy_from_slice(&self[..]);
-      true
-    } else {
-      false
-    }
-  }
+impl<C: Clone + BinmarshalContext, T: BinMarshal<C> + Sized, const N: usize> BinMarshal<C> for [T; N] {
+  type Context = ();
 
-  fn read(view: &mut BitView<'_>, _ctx: ()) -> Option<Self> {
-    view.align(1);
-    view.take::<N>(N, 0).map(|x| Self(x.0.clone()))
-  }
-}
-
-impl<C: Clone, T: BinMarshal<C> + Sized, const N: usize> BinMarshal<C> for [T; N] {
+  #[inline]
   fn write<W: BitWriter>(self, writer: &mut W, ctx: C) -> bool {
     for v in self {
       if !v.write(writer, ctx.clone()) {
@@ -47,6 +51,7 @@ impl<C: Clone, T: BinMarshal<C> + Sized, const N: usize> BinMarshal<C> for [T; N
     true
   }
 
+  #[inline]
   fn read(view: &mut BitView<'_>, ctx: C) -> Option<Self> {
     let mut arr: [MaybeUninit<T>; N] = unsafe { MaybeUninit::uninit().assume_init() };
     for i in 0..N {
@@ -54,11 +59,17 @@ impl<C: Clone, T: BinMarshal<C> + Sized, const N: usize> BinMarshal<C> for [T; N
     }
     return unsafe { Some(arr.as_ptr().cast::<[T; N]>().read()) }
   }
+
+  // Context updates can only map 1-to-1
+  #[inline]
+  fn update<'a>(&'a mut self, _ctx: C::MutableComplement<'a>) { }
 }
 
 macro_rules! unsigned_numeric_impl {
   ( $t:ty ) => {
     impl<const BITS: usize> BinMarshal<BitSpecification<BITS>> for $t {
+      type Context = BitSpecification<BITS>;
+
       #[inline(always)]
       fn write<W: BitWriter>(self, writer: &mut W, _ctx: BitSpecification<BITS>) -> bool {
         let offset = writer.bit_offset();
@@ -132,9 +143,14 @@ macro_rules! unsigned_numeric_impl {
           }
         }
       }
+
+      #[inline(always)]
+      fn update<'a>(&'a mut self, _ctx: ()) { }
     }
 
     impl BinMarshal<()> for $t {
+      type Context = ();
+
       #[inline(always)]
       fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
         self.write(writer, BitSpecification::<{<$t>::BITS as usize}> {})
@@ -144,6 +160,9 @@ macro_rules! unsigned_numeric_impl {
       fn read(view: &mut BitView<'_>, _ctx: ()) -> Option<Self> {
         Self::read(view, BitSpecification::<{<$t>::BITS as usize}> {})
       }
+
+      #[inline(always)]
+      fn update(&mut self, _ctx: ()) { }
     }
   }
 }
@@ -157,13 +176,20 @@ unsigned_numeric_impl!(u128);
 macro_rules! generic_numeric_impl {
   ( $t:ty, $s:expr ) => {
     impl BinMarshal<()> for $t {
+      type Context = ();
+
+      #[inline(always)]
       fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
         Buffer(self.to_be_bytes()).write(writer, _ctx)
       }
 
+      #[inline(always)]
       fn read(view: &mut BitView<'_>, _ctx: ()) -> Option<Self> {
         Some(Self::from_be_bytes(Buffer::<$s>::read(view, _ctx)?.0))
       }
+
+      #[inline(always)]
+      fn update<'a>(&'a mut self, _ctx: ()) { }
     }
   }
 }
@@ -177,6 +203,43 @@ generic_numeric_impl!(i128, 16);
 generic_numeric_impl!(f32, 4);
 generic_numeric_impl!(f64, 8);
 
+impl BinMarshal<()> for bool {
+  type Context = ();
+
+  #[inline(always)]
+  fn write<W: BitWriter>(self, writer: &mut W, _: ()) -> bool {
+    (if self { 1u8 } else { 0u8 }).write(writer, BitSpecification::<1>)
+  }
+
+  #[inline(always)]
+  fn read(view: &mut BitView<'_>, _: ()) -> Option<Self> {
+    let n = u8::read(view, BitSpecification::<1>);
+    n.map(|x| x != 0)
+  }
+
+  #[inline(always)]
+  fn update<'a>(&'a mut self, _ctx: ()) { }
+}
+
+// This makes the assumption that BITS <= 8
+impl<const BITS: usize> BinMarshal<BitSpecification<BITS>> for bool {
+  type Context = BitSpecification<BITS>;
+
+  #[inline(always)]
+  fn write<W: BitWriter>(self, writer: &mut W, ctx: BitSpecification<BITS>) -> bool {
+    (if self { 1u8 } else { 0u8 }).write(writer, ctx)
+  }
+
+  #[inline(always)]
+  fn read(view: &mut BitView<'_>, ctx: BitSpecification<BITS>) -> Option<Self> {
+    let n = u8::read(view, ctx);
+    n.map(|x| x != 0)
+  }
+
+  #[inline(always)]
+  fn update<'a>(&'a mut self, _ctx: ()) { }
+}
+
 #[derive(Proxy)]
 pub struct LengthTaggedVec<T, L>(pub Vec<T>, PhantomData<L>);
 
@@ -186,7 +249,9 @@ impl<T, L> LengthTaggedVec<T, L> {
   }
 }
 
-impl<C: Clone, T: BinMarshal<C> + Sized, L: TryFrom<usize> + TryInto<usize> + BinMarshal<()>> BinMarshal<C> for LengthTaggedVec<T, L> {
+impl<C: Clone + BinmarshalContext, T: BinMarshal<C> + Sized, L: TryFrom<usize> + TryInto<usize> + BinMarshal<()>> BinMarshal<C> for LengthTaggedVec<T, L> {
+  type Context = C;
+
   fn write<W: BitWriter>(self, writer: &mut W, ctx: C) -> bool {
     match L::try_from(self.0.len()) {
       Ok(v) => v.write(writer, ()) && self.0.into_iter().map(|x| x.write(writer, ctx.clone())).reduce(|a, b| a && b).unwrap_or(true),
@@ -208,17 +273,41 @@ impl<C: Clone, T: BinMarshal<C> + Sized, L: TryFrom<usize> + TryInto<usize> + Bi
       None => None
     }
   }
+
+  // Context updates can only map 1-to-1
+  fn update<'a>(&'a mut self, _ctx: C::MutableComplement<'a>) { }
 }
 
 #[derive(Proxy)]
 pub struct Buffer<const N: usize>(pub [u8; N]);
 
+impl<const N: usize> BinMarshal<()> for Buffer<N> {
+  type Context = ();
+
+  #[inline]
+  fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
+    writer.align(1);
+    if let Some((arr, _offset)) = writer.reserve_and_advance::<N>(N, 0) {
+      arr.copy_from_slice(&self[..]);
+      true
+    } else {
+      false
+    }
+  }
+
+  #[inline]
+  fn read(view: &mut BitView<'_>, _ctx: ()) -> Option<Self> {
+    view.align(1);
+    view.take::<N>(N, 0).map(|x| Self(x.0.clone()))
+  }
+
+  #[inline]
+  fn update(&mut self, _ctx: ()) { }
+}
+
 #[cfg(test)]
 mod tests {
-  use binmarshal_macros::BinMarshal;
-
-  use crate::rw::{BitView, BitWriter, BufferBitWriter};
-  use crate::{BinMarshal, BitSpecification, LengthTaggedVec};
+  use crate::{BitSpecification, rw::{BufferBitWriter, BitView}, BinMarshal};
 
   #[test]
   fn test_u8() {
@@ -246,68 +335,5 @@ mod tests {
     assert_eq!(u16::read(&mut reader, ()), Some(0b0010_1101_0010_1101));
     assert_eq!(u8::read(&mut reader, BitSpecification::<5>), Some(0b11100));
     assert_eq!(u8::read(&mut reader, BitSpecification::<1>), None);
-  }
-
-  #[derive(Debug, Clone, BinMarshal, PartialEq, Eq)]
-  struct MyStruct {
-    a: u16,
-    #[marshal(bits = 12)]
-    b: u16,
-    #[marshal(bits = 24)]
-    c: u32,
-    d: u64,
-  }
-
-  #[derive(Debug, Clone, BinMarshal, PartialEq, Eq)]
-  #[marshal(tag_type = u8)]
-  enum MyEnum {
-    #[marshal(tag = "1")]
-    MyStruct(MyStruct),
-    #[marshal(tag = "2")]
-    InnerStruct {
-      #[marshal(bits = 4)]
-      x: u8,
-      a: [i8; 2],
-      b: i16,
-      #[marshal(bits = 4)]
-      v: LengthTaggedVec<u8, u8>
-    },
-    #[marshal(tag = "3")]
-    Unit
-  }
-
-  #[test]
-  fn test_packed() {
-    let v = MyStruct {
-      a: 0b01011111_01011100,
-      b: 0b1011_1011_0001,
-      c: 0b1110_0001_1000_0110_1010_0010,
-      d: u64::MAX - 644225
-    };
-
-    let mut bytes = [0u8; 256];
-    let mut writer = BufferBitWriter::new(&mut bytes);
-    v.clone().write(&mut writer, ());
-
-    let slice = writer.slice();
-    assert_eq!(slice.len(), 15);
-
-    let v2 = MyStruct::read(&mut BitView::new(slice), ());
-    assert_eq!(v2, Some(v));
-  }
-
-  #[test]
-  fn test_packed_enum() {
-    let v = MyEnum::InnerStruct { x: 3, a: [-12, 123], b: -999, v: LengthTaggedVec::new(vec![ 0xD, 0xE, 0xA, 0xD ]) };
-
-    let mut bytes = [0u8; 256];
-    let mut writer = BufferBitWriter::new(&mut bytes);
-    v.clone().write(&mut writer, ());
-
-    let slice = writer.slice();
-    assert_eq!(slice.len(), 9);
-
-    let v2 = MyEnum::read(&mut BitView::new(slice), ());
-    assert_eq!(v2, Some(v));
   }
 }
