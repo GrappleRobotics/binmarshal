@@ -55,6 +55,18 @@ impl<'a> BitView<'a> {
   }
 
   #[inline(always)]
+  pub fn take_aligned_slice(&mut self, bytes: usize) -> Option<&[u8]> {
+    self.align(1);
+    let out = self.data.get(self.offset_byte..self.offset_byte + bytes);
+
+    if out.is_some() {
+      self.offset_byte += bytes;
+    }
+
+    out
+  }
+
+  #[inline(always)]
   pub fn advance(&mut self, bytes: usize, bits: usize) {
     self.offset_byte += (self.offset_bit + bits) / 8 + bytes;
     self.offset_bit = (self.offset_bit + bits) % 8;
@@ -65,6 +77,7 @@ pub trait BitWriter {
   fn bit_offset(&self) -> usize;
   fn align(&mut self, byte_division: usize) -> bool;
   fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Option<(&mut [u8; N], usize)>;
+  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Option<&mut [u8]>;
   fn advance(&mut self, bytes: usize, bits: usize);
   fn slice(&self) -> &[u8];
 }
@@ -112,6 +125,18 @@ impl<'a> BitWriter for BufferBitWriter<'a> {
       self.offset_byte += (self.offset_bit + bits) / 8 + bytes;
       self.offset_bit = (self.offset_bit + bits) % 8;
     }
+    out
+  }
+
+  #[inline(always)]
+  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Option<&mut [u8]> {
+    self.align(1);
+    let out = self.out.get_mut(self.offset_byte..self.offset_byte + bytes);
+
+    if out.is_some() {
+      self.offset_byte += bytes;
+    }
+
     out
   }
 

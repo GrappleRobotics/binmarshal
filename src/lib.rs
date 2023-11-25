@@ -6,7 +6,7 @@ extern crate alloc;
 
 use core::{ops::{Deref, DerefMut}, mem::MaybeUninit, marker::PhantomData};
 
-use alloc::vec::Vec;
+use alloc::{vec::Vec, string::String};
 use rw::{BitView, BitWriter};
 
 pub use binmarshal_macros::{BinMarshal, Context, Proxy};
@@ -303,6 +303,43 @@ impl<const N: usize> BinMarshal<()> for Buffer<N> {
 
   #[inline]
   fn update(&mut self, _ctx: ()) { }
+}
+
+impl BinMarshal<()> for String {
+  type Context = ();
+
+  fn write<W: BitWriter>(self, writer: &mut W, ctx: ()) -> bool {
+    writer.align(1);
+    if let Some(arr) = writer.reserve_and_advance_aligned_slice(self.len() + 1) {
+      arr.copy_from_slice(&self.as_bytes()[..]);
+      arr[arr.len() - 1] = 0;
+      true
+    } else {
+      false
+    }
+  }
+
+  fn read(view: &mut BitView<'_>, ctx: ()) -> Option<Self> {
+    let mut v = alloc::vec![];
+    let mut cont = true;
+    while cont {
+      let b = view.take_aligned_slice(1);
+      match b {
+        Some(slice) if slice[0] == 0x00 => cont = false,
+        Some(slice) => v.push(slice[0]),
+        None => return None,
+      }
+    }
+
+    // This is actually safe because we check for 0x00 above.
+    unsafe {
+      Some(String::from_utf8_unchecked(v))
+    }
+  }
+
+  fn update<'a>(&'a mut self, ctx: <() as BinmarshalContext>::MutableComplement<'a>) {
+      todo!()
+  }
 }
 
 #[cfg(test)]
