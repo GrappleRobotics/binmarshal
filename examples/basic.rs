@@ -1,6 +1,8 @@
 use binmarshal::{LengthTaggedVec, rw::{BufferBitWriter, BitWriter, BitView}, BinMarshal};
+use binmarshal_macros::magic;
 
 #[derive(Debug, Clone, PartialEq, BinMarshal)]
+#[marshal(magic = b"ABCD")]
 struct MyStruct {
   a: u8,
   #[marshal(bits = 12)]
@@ -45,7 +47,7 @@ fn main() {
   v.clone().write(&mut writer, ());
 
   let slice = writer.slice();
-  assert_eq!(slice.len(), 20);
+  assert_eq!(slice.len(), 24);
 
   let v2 = MyEnum::read(&mut BitView::new(slice), ());
   assert_eq!(v2, Some(v));

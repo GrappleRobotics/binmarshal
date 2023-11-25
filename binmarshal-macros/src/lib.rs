@@ -1,11 +1,12 @@
 use darling::{FromField, FromAttributes, FromVariant};
-use proc_macro2::{TokenStream, Span};
+use proc_macro2::{TokenStream, Span, Literal};
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Type, Ident, parse_str, Path, Fields, Field};
+use syn::{parse_macro_input, DeriveInput, Type, Ident, parse_str, Path, Fields, Field, parse::Parse, Token};
 
 #[derive(Debug, FromAttributes)]
 #[darling(attributes(marshal))]
 struct StructOrEnumReceiver {
+  magic: Option<syn::LitByteStr>,
   ctx: Option<Path>,
   tag_type: Option<Path>,
   tag: Option<String>,
@@ -103,6 +104,14 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
     quote! { () }
   };
 
+  let (magic_definition, magic_write, magic_read) = match attrs.magic {
+    Some(lit) => {
+      let magic_name = syn::Ident::new(&format!("{}Magic", ident), ident.span());
+      (gen_magic(Magic { name: magic_name.clone(), magic: lit }).into(), quote!{ #magic_name {}.write(writer, ()) }, quote! { <#magic_name as binmarshal::BinMarshal<()>>::read(view, ())?; })
+    },
+    None => (quote!{}, quote!{ true }, quote!{})
+  };
+
   match data {
     syn::Data::Struct(st) => {
       let it = st.fields.into_iter().enumerate().map(|(i, field)| process_struct_field(i, field));
@@ -115,6 +124,8 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
       let to_update = it.clone().map(|x| x.5).filter_map(|x| x);
       
       let out = quote! {
+        #magic_definition
+
         impl binmarshal::BinMarshal<#ctx_ty> for #ident {
           type Context = #ctx_ty;
 
@@ -122,12 +133,13 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
           #[allow(unused_variables)]
           fn write<W: binmarshal::rw::BitWriter>(self, writer: &mut W, ctx: #ctx_ty) -> bool {
             #(#to_unpack)*
-            #to_write
+            #magic_write && #to_write
           }
 
           #[inline(always)]
           #[allow(unused_variables)]
           fn read(view: &mut binmarshal::rw::BitView<'_>, ctx: #ctx_ty) -> Option<Self> {
+            #magic_read
             #(#to_read)*
             Some(Self { #(#to_construct),* })
           }
@@ -259,6 +271,8 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
       let update_variants = it.clone().map(|(_, _, _, update)| update);
 
       let out = quote! {
+        #magic_definition
+
         impl binmarshal::BinMarshal<#ctx_ty> for #ident {
           type Context = #ctx_ty;
 
@@ -268,7 +282,7 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
             let _tag = match &self {
               #(#write_tag_match_variants),*
             };
-            #write_tag && match self {
+            #magic_write && #write_tag && match self {
               #(#write_match_variants),*
             }
           }
@@ -276,6 +290,7 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
           #[inline(always)]
           #[allow(unused_variables)]
           fn read(view: &mut binmarshal::rw::BitView<'_>, ctx: #ctx_ty) -> Option<Self> {
+            #magic_read
             #read_tag
             match _tag {
               #(#read_match_variants),*,
@@ -489,4 +504,51 @@ pub fn derive_context(input: proc_macro::TokenStream) -> proc_macro::TokenStream
     syn::Data::Enum(_) => panic!("Context cannot be derived for an Enum - it must be a struct"),
     syn::Data::Union(_) => panic!("Context cannot be derived for a Union - it must be a struct"),
   }
+}
+
+struct Magic {
+  name: Ident,
+  magic: syn::LitByteStr
+}
+
+impl Parse for Magic {
+  fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+    let name = input.parse()?;
+    input.parse::<Token![,]>()?;
+    let magic = input.parse()?;
+
+    Ok(Self { name, magic })
+  }
+}
+
+fn gen_magic(m: Magic) -> proc_macro::TokenStream {
+  let Magic { name, magic } = m;
+  
+  quote! {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct #name;
+
+    impl binmarshal::BinMarshal<()> for #name {
+      type Context = ();
+
+      fn write<W: binmarshal::rw::BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
+        #magic.to_owned().write(writer, _ctx)
+      }
+
+      fn read(view: &mut binmarshal::rw::BitView<'_>, _ctx: ()) -> Option<Self> {
+        if Some(#magic.to_owned()) == binmarshal::BinMarshal::<()>::read(view, _ctx) {
+          Some(Self)
+        } else {
+          None
+        }
+      }
+
+      fn update<'a>(&'a mut self, _ctx: <() as binmarshal::BinmarshalContext>::MutableComplement<'a>) { }
+    }
+  }.into()
+}
+
+#[proc_macro]
+pub fn magic(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+  gen_magic(parse_macro_input!(item as Magic))
 }

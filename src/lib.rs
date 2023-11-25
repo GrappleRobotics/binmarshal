@@ -6,7 +6,7 @@ extern crate alloc;
 
 use core::{ops::{Deref, DerefMut}, mem::MaybeUninit, marker::PhantomData};
 
-use alloc::{vec::Vec, string::String};
+use alloc::{vec::Vec, string::String, borrow::ToOwned};
 use rw::{BitView, BitWriter};
 
 pub use binmarshal_macros::{BinMarshal, Context, Proxy};
@@ -337,9 +337,7 @@ impl BinMarshal<()> for String {
     }
   }
 
-  fn update<'a>(&'a mut self, _ctx: <() as BinmarshalContext>::MutableComplement<'a>) {
-      todo!()
-  }
+  fn update<'a>(&'a mut self, _ctx: <() as BinmarshalContext>::MutableComplement<'a>) { }
 }
 
 #[cfg(test)]
