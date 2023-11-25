@@ -1,0 +1,15 @@
+[package]
+name = "binmarshal"
+version = "0.1.0"
+edition = "2021"
+description = "Pack and unpack structs and enums into and out of binary data streams."
+documentation = "https://docs.rs/binmarshal"
+repository = "https://github.com/GrappleRobotics/binmarshal"
+readme = "README.md"
+authors = ["Jaci Brunning"]
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+binmarshal-macros = { path = "binmarshal-macros" }
