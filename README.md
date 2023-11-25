@@ -1,4 +1,4 @@
-# grapple-config
+# Binmarshal
 [![crates.io](https://img.shields.io/crates/v/binmarshal.svg)](https://crates.io/crates/binmarshal)
 [![Documentation](https://docs.rs/binmarshal/badge.svg)](https://docs.rs/binmarshal)
 
