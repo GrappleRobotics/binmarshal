@@ -12,7 +12,7 @@ struct Var4Context {
 }
 
 #[derive(Debug, Clone, PartialEq, BinMarshal)]
-#[marshal(ctx = Var4Context, tag_type = u8, tag = "ctx.variant")]
+#[marshal(ctx = Var4Context, tag = "ctx.variant")]
 enum Var4Inner {
   #[marshal(tag = "1")]
   Variant1,
@@ -23,7 +23,7 @@ enum Var4Inner {
 }
 
 #[derive(Debug, Clone, PartialEq, BinMarshal)]
-#[marshal(ctx = MyContext, tag_type = u8, tag = "ctx.variant")]
+#[marshal(ctx = MyContext, tag = "ctx.variant")]
 enum MyEnum {
   #[marshal(tag = "1")]
   Variant1,

@@ -293,8 +293,6 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
         }
       };
 
-      println!("{}", out);
-
       out.into()
     },
     syn::Data::Union(_) => panic!("Don't know how to serialise unions!"),
