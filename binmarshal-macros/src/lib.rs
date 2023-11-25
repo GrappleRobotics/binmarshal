@@ -21,6 +21,7 @@ struct StructFieldReceiver {
   align: Option<usize>,
   bits: Option<usize>,
   ctx: Option<String>,
+  forward_ctx: Option<bool>,
 }
 
 #[derive(Debug, FromVariant)]
@@ -48,6 +49,8 @@ fn process_struct_field(i: usize, field: Field) -> (TokenStream, TokenStream, To
   } else if let Some(ctx) = receiver.ctx.clone() {
     let parsed: TokenStream = parse_str(&ctx).unwrap();
     quote! { binmarshal::SelfType::<<#ty as binmarshal::BinMarshal<_>>::Context> #parsed }
+  } else if Some(true) == receiver.forward_ctx {
+    quote! { ctx }
   } else {
     quote! { () }
   };
@@ -73,12 +76,15 @@ fn process_struct_field(i: usize, field: Field) -> (TokenStream, TokenStream, To
 
   let construct = quote! { #var_name };
 
-  let update = match receiver.ctx {
-    Some(ctx) => {
+  let update = match (receiver.ctx, receiver.forward_ctx) {
+    (_, Some(true)) => {
+      Some(quote! { #var_name.update(ctx) })
+    },
+    (Some(ctx), _) => {
       let parsed: TokenStream = parse_str(&ctx).unwrap();
       Some(quote! { #var_name.update(binmarshal::SelfType::<<<#ty as binmarshal::BinMarshal<_>>::Context as binmarshal::BinmarshalContext>::MutableComplement<'a>> #parsed) })
     },
-    None => None,
+    _ => None,
   };
 
   (write, read, construct, unpack, unpack_mutable, update)
@@ -286,6 +292,8 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
           }
         }
       };
+
+      println!("{}", out);
 
       out.into()
     },
