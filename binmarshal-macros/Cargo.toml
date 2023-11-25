@@ -5,7 +5,7 @@ edition = "2021"
 description = "Derive and helper macros for binmarshal."
 documentation = "https://docs.rs/binmarshal-macros"
 repository = "https://github.com/GrappleRobotics/binmarshal"
-readme = "README.md"
+readme = "../README.md"
 authors = ["Jaci Brunning"]
 license = "MIT"
 
