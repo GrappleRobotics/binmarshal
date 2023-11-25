@@ -307,6 +307,8 @@ pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     attrs: _, vis: _, ident, generics, data
   } = parse_macro_input!(input as DeriveInput);
 
+  let generics_inner = &generics.params;
+
   match data {
     syn::Data::Struct(st) => {
       match st.fields {
@@ -346,7 +348,7 @@ pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             #lt #(#ident_generics),* #gt
           };
 
-          let out = quote! {
+          let mut out = quote! {
             impl #generics From<#ft> for #ident #ident_generics {
               fn from(inner: #ft) -> Self {
                 Self(inner, #(#extra_default),*)
@@ -384,6 +386,52 @@ pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
             impl #generics Eq for #ident #ident_generics where #ft: Eq { }
           };
+
+          #[cfg(feature = "serde")]
+          {
+            out = quote!{
+              #out
+
+              impl #generics serde::Serialize for #ident #ident_generics where #ft: serde::Serialize {
+                  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                  where
+                    S: serde::Serializer,
+                  {
+                    self.0.serialize(serializer)
+                  }
+              }
+
+              impl<'de, #generics_inner> serde::Deserialize<'de> for #ident #ident_generics where #ft: serde::Deserialize<'de> {
+                  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+                  where
+                      D: serde::Deserializer<'de>,
+                  {
+                    <#ft as serde::Deserialize<'de>>::deserialize::<D>(deserializer).map(|x| Self(x, #(#extra_default),*))
+                  }
+              }
+            };
+          }
+
+          #[cfg(feature = "schema")]
+          {
+            out = quote!{
+              #out 
+
+              impl #generics schemars::JsonSchema for #ident #ident_generics where #ft: schemars::JsonSchema {
+                fn schema_name() -> alloc::string::String {
+                  <#ft as schemars::JsonSchema>::schema_name()
+                }
+
+                fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+                  <#ft as schemars::JsonSchema>::json_schema(gen)
+                }
+
+                fn is_referenceable() -> bool {
+                  <#ft as schemars::JsonSchema>::is_referenceable()
+                }
+              }
+            }
+          }
 
           out.into()
         },
