@@ -308,7 +308,7 @@ impl<const N: usize> BinMarshal<()> for Buffer<N> {
 impl BinMarshal<()> for String {
   type Context = ();
 
-  fn write<W: BitWriter>(self, writer: &mut W, ctx: ()) -> bool {
+  fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
     writer.align(1);
     if let Some(arr) = writer.reserve_and_advance_aligned_slice(self.len() + 1) {
       arr.copy_from_slice(&self.as_bytes()[..]);
@@ -319,7 +319,7 @@ impl BinMarshal<()> for String {
     }
   }
 
-  fn read(view: &mut BitView<'_>, ctx: ()) -> Option<Self> {
+  fn read(view: &mut BitView<'_>, _ctx: ()) -> Option<Self> {
     let mut v = alloc::vec![];
     let mut cont = true;
     while cont {
@@ -337,7 +337,7 @@ impl BinMarshal<()> for String {
     }
   }
 
-  fn update<'a>(&'a mut self, ctx: <() as BinmarshalContext>::MutableComplement<'a>) {
+  fn update<'a>(&'a mut self, _ctx: <() as BinmarshalContext>::MutableComplement<'a>) {
       todo!()
   }
 }
