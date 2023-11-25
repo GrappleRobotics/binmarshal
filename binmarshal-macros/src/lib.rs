@@ -144,14 +144,14 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
       out.into()
     },
     syn::Data::Enum(en) => {
-      let tag_type = attrs.tag_type.unwrap();
-
       let (write_tag, read_tag, update_tag) = match attrs.tag {
         Some(tag) => {
           let in_tag: TokenStream = parse_str(&tag).unwrap();
           (quote! { true }, quote! { let _tag = #in_tag; }, Some(in_tag))
         },
         None => {
+          let tag_type = attrs.tag_type.unwrap();
+
           let ctx_val = match attrs.tag_bits {
             Some(bits) => quote!{ binmarshal::BitSpecification::<#bits> {} },
             None => quote! { () }
