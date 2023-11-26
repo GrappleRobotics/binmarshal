@@ -1,4 +1,4 @@
-use binmarshal::{LengthTaggedVec, rw::{BufferBitWriter, BitWriter, BitView}, BinMarshal};
+use binmarshal::{LengthTaggedVec, rw::{BufferBitWriter, BitWriter, BitView, VecBitWriter}, BinMarshal};
 use binmarshal_macros::magic;
 
 #[derive(Debug, Clone, PartialEq, BinMarshal)]
@@ -42,9 +42,8 @@ fn main() {
     g: LengthTaggedVec::new(vec![ true, false, true, false, false, true, true, true, false, true, true, false ])
   });
 
-  let mut bytes = [0u8; 256];
-  let mut writer = BufferBitWriter::new(&mut bytes);
-  v.clone().write(&mut writer, ());
+  let mut writer = VecBitWriter::new();
+  assert!(v.clone().write(&mut writer, ()));
 
   let slice = writer.slice();
   assert_eq!(slice.len(), 24);
