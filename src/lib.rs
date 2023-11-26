@@ -311,7 +311,8 @@ impl BinMarshal<()> for String {
   fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
     writer.align(1);
     if let Some(arr) = writer.reserve_and_advance_aligned_slice(self.len() + 1) {
-      arr.copy_from_slice(&self.as_bytes()[..]);
+      let arr_str_bytes = &mut arr[0..self.len()];
+      arr_str_bytes.copy_from_slice(&self.as_bytes()[..]);
       arr[arr.len() - 1] = 0;
       true
     } else {

@@ -14,7 +14,8 @@ struct MyStruct {
   #[marshal(bits = 1)]
   f: [bool; 8],
   #[marshal(bits = 1)]
-  g: LengthTaggedVec<bool, u8>
+  g: LengthTaggedVec<bool, u8>,
+  h: String
 }
 
 #[derive(Debug, Clone, PartialEq, BinMarshal)]
@@ -39,14 +40,15 @@ fn main() {
     d: -1234,
     e: 10.101,
     f: [ true, false, true, true, false, false, true, false ],
-    g: LengthTaggedVec::new(vec![ true, false, true, false, false, true, true, true, false, true, true, false ])
+    g: LengthTaggedVec::new(vec![ true, false, true, false, false, true, true, true, false, true, true, false ]),
+    h: "Hello World".to_owned()
   });
 
   let mut writer = VecBitWriter::new();
   assert!(v.clone().write(&mut writer, ()));
 
   let slice = writer.slice();
-  assert_eq!(slice.len(), 24);
+  assert_eq!(slice.len(), 36);
 
   let v2 = MyEnum::read(&mut BitView::new(slice), ());
   assert_eq!(v2, Some(v));
