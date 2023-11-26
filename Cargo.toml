@@ -11,6 +11,15 @@ license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+macros = []
+
+[workspace]
+members = [
+    "binmarshal-macros",
+    ".",
+]
+
 [dependencies]
 binmarshal-macros = { version = "^0.1.0", path = "binmarshal-macros", default-features = false }
 schemars = { version = "0.8.12", optional = true }

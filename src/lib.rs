@@ -7,11 +7,16 @@ extern crate alloc;
 use core::{ops::{Deref, DerefMut}, mem::MaybeUninit, marker::PhantomData};
 
 use alloc::{vec::Vec, string::String, borrow::ToOwned};
+#[cfg(not(feature = "macros"))]
+use binmarshal_macros::Proxy;
 use rw::{BitView, BitWriter};
 
 pub use binmarshal_macros::{BinMarshal, Context, Proxy};
 
 pub mod rw;
+
+#[cfg(feature = "macros")]
+pub use binmarshal_macros::*;
 
 // See: https://github.com/rust-lang/rust/issues/86935
 pub type SelfType<T> = T;
