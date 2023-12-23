@@ -1,12 +1,10 @@
-use binmarshal::{BinMarshal, Context, rw::{BufferBitWriter, BitView, BitWriter}};
+use binmarshal::{BinMarshal, rw::{BufferBitWriter, BitView, BitWriter}};
 
-#[derive(Context)]
 struct MyContext {
   variant: u8,
   inner: u8
 }
 
-#[derive(Context)]
 struct Var4Context {
   variant: u8
 }
@@ -33,7 +31,7 @@ enum MyEnum {
   Variant3,
   #[marshal(tag = "4")]
   Variant4 {
-    #[marshal(ctx = "{ variant: ctx.inner }")]
+    #[marshal(ctx = "construct", ctx_member(field = "variant", member = "ctx.inner"))]
     inner: Var4Inner
   }
 }
@@ -41,7 +39,7 @@ enum MyEnum {
 #[derive(Debug, Clone, PartialEq, BinMarshal)]
 #[marshal(ctx = MyContext)]
 struct InnerStruct {
-  #[marshal(ctx = "{ variant: ctx.variant, inner: ctx.inner }")]
+  #[marshal(ctx = "forward")]
   en: MyEnum
 }
 
@@ -49,7 +47,7 @@ struct InnerStruct {
 struct MyStruct {
   which_variant: u8,
   which_inner_variant: u8,
-  #[marshal(ctx = "{ variant: which_variant, inner: which_inner_variant }")]
+  #[marshal(ctx = "construct", ctx_member(field = "variant", member = "which_variant"), ctx_member(field = "inner", member = "which_inner_variant"))]
   inner: InnerStruct
 }
 
@@ -62,7 +60,7 @@ fn main() {
     }
   };
 
-  v.update(());
+  v.update(&mut ());
 
   assert_eq!(v.which_variant, 4);
   assert_eq!(v.which_inner_variant, 2);

@@ -1,5 +1,4 @@
-use binmarshal::{LengthTaggedVec, rw::{BufferBitWriter, BitWriter, BitView, VecBitWriter}, BinMarshal};
-use binmarshal_macros::magic;
+use binmarshal::{LengthTaggedVec, rw::{BitWriter, BitView, VecBitWriter}, BinMarshal};
 
 #[derive(Debug, Clone, PartialEq, BinMarshal)]
 #[marshal(magic = b"ABCD")]
@@ -14,7 +13,7 @@ struct MyStruct {
   #[marshal(bits = 1)]
   f: [bool; 8],
   #[marshal(bits = 1)]
-  g: LengthTaggedVec<bool, u8>,
+  g: LengthTaggedVec<u8, bool>,
   h: String
 }
 

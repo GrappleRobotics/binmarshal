@@ -5,12 +5,14 @@
 Pack and unpack structs and enums into and out of binary data streams.
 
 ## Add to your project
-```
+```bash
 cargo add binmarshal
 ```
 
 ## Packing Structs and Enums
 ```rust
+use binmarshal::*;
+
 #[derive(Debug, Clone, BinMarshal)]
 #[marshal(tag_type = u8)]
 enum MyEnum {
@@ -31,7 +33,7 @@ fn main() {
     a: 13,
     b: 5192,
     c: LengthTaggedVec::new(vec![ -12, -242, 12034 ])
-  }
+  };
 
   // Packing
   let mut bytes = [0u8; 256];
@@ -48,7 +50,9 @@ fn main() {
 Context allows you to pass variables between structs and enums, primarily for tagging enums. If you are using tagged enums with context, you must call `.update()` prior to writing.
 
 ```rust
-#[derive(Context)]
+use binmarshal::*;
+
+#[derive(Clone)]
 struct MyContext {
   tag: u8
 }
@@ -65,7 +69,7 @@ enum MyEnum {
 #[derive(Debug, Clone, BinMarshal)]
 struct MyStruct {
   variant: u8,
-  #[marshal(ctx = "{ tag: variant }")]
+  #[marshal(ctx = "construct", ctx_member(field = "tag", member = "variant"))]
   inner: MyEnum
 }
 ```

@@ -6,75 +6,28 @@ extern crate alloc;
 
 use core::{ops::{Deref, DerefMut}, mem::MaybeUninit, marker::PhantomData};
 
-use alloc::{vec::Vec, string::String, borrow::ToOwned};
-use rw::{BitView, BitWriter};
+use alloc::{vec::Vec, string::String};
+pub use rw::*;
 
-pub use binmarshal_macros::{BinMarshal, Context, Proxy};
+pub use binmarshal_macros::{BinMarshal, Proxy};
 
 pub mod rw;
 
 // See: https://github.com/rust-lang/rust/issues/86935
 pub type SelfType<T> = T;
-pub trait BinmarshalContext {
-  type MutableComplement<'a>;
-}
-
-impl BinmarshalContext for () {
-  type MutableComplement<'a> = ();
-}
-
-// pub trait MutableContextElement<T> {
-//   fn set(&mut self, value: T);
-//   fn get(&self) -> T;   // This can't be a reference since, in the functional case, we need to return a full value. Maybe we can make it Cow?
-// }
-
-// pub struct RefMutableContextElement<'a, T>(pub &'a mut T);
-
-// impl<'a, T: Copy> MutableContextElement<T> for RefMutableContextElement<'a, T> {
-//   fn set(&mut self, value: T) {
-//     *self.0 = value;
-//   }
-
-//   fn get(&self) -> T {
-//     *self.0
-//   }
-// }
-
-// pub struct FunctionalMutableContextElement<T, Set: FnMut(T), Get: Fn() -> T> {
-//   set: Set,
-//   get: Get,
-// }
-
-// impl<T, Set: FnMut(T), Get: Fn() -> T> FunctionalMutableContextElement<T, Set, Get> {
-//   pub fn new(set: Set, get: Get) -> Self { Self { set, get } }
-// }
-
-// impl<'a, T: 'a, Set: FnMut(T), Get: Fn() -> T> MutableContextElement<T> for FunctionalMutableContextElement<T, Set, Get> {
-//   fn set(&mut self, value: T) {
-//     (self.set)(value)
-//   }
-
-//   fn get(&self) -> T {
-//     (self.get)()
-//   }
-// }
 
 #[derive(Clone)]
 pub struct BitSpecification<const BITS: usize>;
 
-impl<const BITS: usize> BinmarshalContext for BitSpecification<BITS> {
-  type MutableComplement<'a> = ();
-}
-
-pub trait BinMarshal<Context = ()> : Sized where Context: BinmarshalContext {
-  type Context: BinmarshalContext;
+pub trait BinMarshal<Context = ()> : Sized {
+  type Context;
 
   fn write<W: BitWriter>(self, writer: &mut W, ctx: Context) -> bool;
   fn read(view: &mut BitView<'_>, ctx: Context) -> Option<Self>;
-  fn update<'a>(&'a mut self, ctx: <Context as BinmarshalContext>::MutableComplement<'a>);
+  fn update(&mut self, ctx: &mut Context);
 }
 
-impl<C: Clone + BinmarshalContext, T: BinMarshal<C> + Sized, const N: usize> BinMarshal<C> for [T; N] {
+impl<C: Clone, T: BinMarshal<C> + Sized, const N: usize> BinMarshal<C> for [T; N] {
   type Context = ();
 
   #[inline]
@@ -98,7 +51,7 @@ impl<C: Clone + BinmarshalContext, T: BinMarshal<C> + Sized, const N: usize> Bin
 
   // Context updates can only map 1-to-1
   #[inline]
-  fn update<'a>(&'a mut self, _ctx: C::MutableComplement<'a>) { }
+  fn update(& mut self, _ctx: &mut C) { }
 }
 
 macro_rules! unsigned_numeric_impl {
@@ -181,7 +134,7 @@ macro_rules! unsigned_numeric_impl {
       }
 
       #[inline(always)]
-      fn update<'a>(&'a mut self, _ctx: ()) { }
+      fn update(& mut self, _ctx: &mut BitSpecification<BITS>) { }
     }
 
     impl BinMarshal<()> for $t {
@@ -198,7 +151,7 @@ macro_rules! unsigned_numeric_impl {
       }
 
       #[inline(always)]
-      fn update(&mut self, _ctx: ()) { }
+      fn update(&mut self, _ctx: &mut ()) { }
     }
   }
 }
@@ -225,7 +178,7 @@ macro_rules! generic_numeric_impl {
       }
 
       #[inline(always)]
-      fn update<'a>(&'a mut self, _ctx: ()) { }
+      fn update(& mut self, _ctx: &mut ()) { }
     }
   }
 }
@@ -254,7 +207,7 @@ impl BinMarshal<()> for bool {
   }
 
   #[inline(always)]
-  fn update<'a>(&'a mut self, _ctx: ()) { }
+  fn update(& mut self, _ctx: &mut ()) { }
 }
 
 // This makes the assumption that BITS <= 8
@@ -273,19 +226,19 @@ impl<const BITS: usize> BinMarshal<BitSpecification<BITS>> for bool {
   }
 
   #[inline(always)]
-  fn update<'a>(&'a mut self, _ctx: ()) { }
+  fn update(& mut self, _ctx: &mut BitSpecification<BITS>) { }
 }
 
 #[derive(Proxy)]
-pub struct LengthTaggedVec<T, L>(pub Vec<T>, PhantomData<L>);
+pub struct LengthTaggedVec<L, T>(pub Vec<T>, PhantomData<L>);
 
-impl<T, L> LengthTaggedVec<T, L> {
+impl<L, T> LengthTaggedVec<L, T> {
   pub fn new(v: Vec<T>) -> Self {
     Self(v, PhantomData)
   }
 }
 
-impl<C: Clone + BinmarshalContext, T: BinMarshal<C> + Sized, L: TryFrom<usize> + TryInto<usize> + BinMarshal<()>> BinMarshal<C> for LengthTaggedVec<T, L> {
+impl<C: Clone, T: BinMarshal<C> + Sized, L: TryFrom<usize> + TryInto<usize> + BinMarshal<()>> BinMarshal<C> for LengthTaggedVec<L, T> {
   type Context = C;
 
   fn write<W: BitWriter>(self, writer: &mut W, ctx: C) -> bool {
@@ -311,7 +264,7 @@ impl<C: Clone + BinmarshalContext, T: BinMarshal<C> + Sized, L: TryFrom<usize> +
   }
 
   // Context updates can only map 1-to-1
-  fn update<'a>(&'a mut self, _ctx: C::MutableComplement<'a>) { }
+  fn update(& mut self, _ctx: &mut C) { }
 }
 
 #[derive(Proxy)]
@@ -338,7 +291,7 @@ impl<const N: usize> BinMarshal<()> for Buffer<N> {
   }
 
   #[inline]
-  fn update(&mut self, _ctx: ()) { }
+  fn update(&mut self, _ctx: &mut ()) { }
 }
 
 impl BinMarshal<()> for String {
@@ -374,7 +327,7 @@ impl BinMarshal<()> for String {
     }
   }
 
-  fn update<'a>(&'a mut self, _ctx: <() as BinmarshalContext>::MutableComplement<'a>) { }
+  fn update(& mut self, _ctx: &mut ()) { }
 }
 
 #[cfg(test)]
