@@ -23,6 +23,42 @@ impl BinmarshalContext for () {
   type MutableComplement<'a> = ();
 }
 
+// pub trait MutableContextElement<T> {
+//   fn set(&mut self, value: T);
+//   fn get(&self) -> T;   // This can't be a reference since, in the functional case, we need to return a full value. Maybe we can make it Cow?
+// }
+
+// pub struct RefMutableContextElement<'a, T>(pub &'a mut T);
+
+// impl<'a, T: Copy> MutableContextElement<T> for RefMutableContextElement<'a, T> {
+//   fn set(&mut self, value: T) {
+//     *self.0 = value;
+//   }
+
+//   fn get(&self) -> T {
+//     *self.0
+//   }
+// }
+
+// pub struct FunctionalMutableContextElement<T, Set: FnMut(T), Get: Fn() -> T> {
+//   set: Set,
+//   get: Get,
+// }
+
+// impl<T, Set: FnMut(T), Get: Fn() -> T> FunctionalMutableContextElement<T, Set, Get> {
+//   pub fn new(set: Set, get: Get) -> Self { Self { set, get } }
+// }
+
+// impl<'a, T: 'a, Set: FnMut(T), Get: Fn() -> T> MutableContextElement<T> for FunctionalMutableContextElement<T, Set, Get> {
+//   fn set(&mut self, value: T) {
+//     (self.set)(value)
+//   }
+
+//   fn get(&self) -> T {
+//     (self.get)()
+//   }
+// }
+
 #[derive(Clone)]
 pub struct BitSpecification<const BITS: usize>;
 

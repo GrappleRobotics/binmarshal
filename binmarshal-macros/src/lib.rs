@@ -23,6 +23,7 @@ struct StructFieldReceiver {
   bits: Option<usize>,
   ctx: Option<String>,
   forward_ctx: Option<bool>,
+  asymmetric_ctx: Option<bool>,
 }
 
 #[derive(Debug, FromVariant)]
@@ -33,7 +34,7 @@ struct EnumVariantReceiver {
   tag: String
 }
 
-fn process_struct_field(i: usize, field: Field) -> (TokenStream, TokenStream, TokenStream, TokenStream, TokenStream, Option<TokenStream>) {
+fn process_struct_field(i: usize, field: Field) -> (TokenStream, TokenStream, TokenStream, TokenStream, TokenStream, TokenStream, Option<TokenStream>) {
   let idx = syn::Index::from(i);
 
   let receiver = StructFieldReceiver::from_field(&field).unwrap();
@@ -52,6 +53,8 @@ fn process_struct_field(i: usize, field: Field) -> (TokenStream, TokenStream, To
     quote! { binmarshal::SelfType::<<#ty as binmarshal::BinMarshal<_>>::Context> #parsed }
   } else if Some(true) == receiver.forward_ctx {
     quote! { ctx }
+  } else if Some(true) == receiver.asymmetric_ctx {
+    quote! { ctx.into() }
   } else {
     quote! { () }
   };
@@ -76,19 +79,31 @@ fn process_struct_field(i: usize, field: Field) -> (TokenStream, TokenStream, To
   };
 
   let construct = quote! { #var_name };
+  let destruct = quote!{ #var_name };
 
-  let update = match (receiver.ctx, receiver.forward_ctx) {
-    (_, Some(true)) => {
+  let update = match (receiver.ctx, receiver.asymmetric_ctx, receiver.forward_ctx) {
+    (_, _, Some(true)) => {
+      // Forward context directly
       Some(quote! { #var_name.update(ctx) })
+    }
+    (_, Some(true), _) => {
+      // Asymmetric context
+      Some(quote! {
+        let mut tmp_ctx = ctx.into();
+        #var_name.update(&mut tmp_ctx);
+        // *ctx = tmp_ctx.into();
+      })
+      // let parsed: TokenStream = parse_str(&ctx).unwrap();
+      // Some(quote! { #var_name_ref.update(binmarshal::SelfType::<<<#ty as binmarshal::BinMarshal<_>>::Context as binmarshal::BinmarshalContext>::MutableComplement<'_>> #parsed) })
     },
-    (Some(ctx), _) => {
+    (Some(ctx), _, _) => {
       let parsed: TokenStream = parse_str(&ctx).unwrap();
-      Some(quote! { #var_name.update(binmarshal::SelfType::<<<#ty as binmarshal::BinMarshal<_>>::Context as binmarshal::BinmarshalContext>::MutableComplement<'a>> #parsed) })
+      Some(quote! { #var_name.update(binmarshal::SelfType::<<<#ty as binmarshal::BinMarshal<_>>::Context as binmarshal::BinmarshalContext>::MutableComplement<'_>> #parsed) })
     },
     _ => None,
   };
 
-  (write, read, construct, unpack, unpack_mutable, update)
+  (write, read, construct, destruct, unpack, unpack_mutable, update)
 }
 
 #[proc_macro_derive(BinMarshal, attributes(marshal))]
@@ -119,9 +134,9 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
       let to_write = it.clone().map(|x| x.0).reduce(|a, b| quote!{ #a && #b });
       let to_read = it.clone().map(|x| x.1);
       let to_construct = it.clone().map(|x| x.2);
-      let to_unpack = it.clone().map(|x| x.3);
-      let to_unpack_mutable = it.clone().map(|x| x.4);
-      let to_update = it.clone().map(|x| x.5).filter_map(|x| x);
+      let to_unpack = it.clone().map(|x| x.4);
+      let to_unpack_mutable = it.clone().map(|x| x.5);
+      let to_update = it.clone().map(|x| x.6).filter_map(|x| x);
       
       let out = quote! {
         #magic_definition
@@ -152,6 +167,8 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
           }
         }
       };
+
+      println!("{}", out.to_string());
 
       out.into()
     },
@@ -193,7 +210,8 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
             let write = processed_fields.clone().map(|t| t.0).reduce(|a, b| quote!{ #a && #b });
             let read = processed_fields.clone().map(|t| t.1);
             let construct = processed_fields.clone().map(|t| t.2);
-            let update = processed_fields.clone().map(|t| t.5).filter_map(|x| x);
+            let destruct = processed_fields.clone().map(|t| t.3);
+            let update = processed_fields.clone().map(|t| t.6).filter_map(|x| x);
             let construct2 = construct.clone();
             let construct3 = construct.clone();
 
@@ -215,7 +233,7 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
             };
 
             let update = quote!{
-              Self::#name { #(#construct3),* } => {
+              Self::#name { #(#destruct),* } => {
                 #inner_update;
                 #(#update);*
               }
@@ -229,7 +247,7 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
             let write = processed_fields.clone().map(|t| t.0).reduce(|a, b| quote!{ #a && #b });
             let read = processed_fields.clone().map(|t| t.1);
             let construct = processed_fields.clone().map(|t| t.2);
-            let update = processed_fields.clone().map(|t| t.5).filter_map(|x| x);
+            let update = processed_fields.clone().map(|t| t.6).filter_map(|x| x);
             let construct2 = construct.clone();
             let construct3 = construct.clone();
 
@@ -307,6 +325,8 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
           }
         }
       };
+
+      println!("{}", out.to_string());
 
       out.into()
     },
@@ -456,55 +476,55 @@ pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
   }
 }
 
-#[proc_macro_derive(Context)]
-pub fn derive_context(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-  let DeriveInput {
-    attrs: _, vis, ident, generics: _, data
-  } = parse_macro_input!(input as DeriveInput);
+// #[proc_macro_derive(Context)]
+// pub fn derive_context(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+//   let DeriveInput {
+//     attrs: _, vis, ident, generics: _, data
+//   } = parse_macro_input!(input as DeriveInput);
 
-  let new_ident = syn::Ident::new(&format!("{}Complement", ident), ident.span());
-  match data {
-    syn::Data::Struct(st) => {
-      let out = match st.fields {
-        Fields::Named(named) => {
-          let fields = named.named.into_iter().map(|field| {
-            let Field { attrs, vis, mutability: _, ident, colon_token, ty } = field;
-            quote! { #(#attrs)* #vis #ident #colon_token &'a mut #ty }
-          });
+//   let new_ident = syn::Ident::new(&format!("{}Complement", ident), ident.span());
+//   match data {
+//     syn::Data::Struct(st) => {
+//       let out = match st.fields {
+//         Fields::Named(named) => {
+//           let fields = named.named.into_iter().map(|field| {
+//             let Field { attrs, vis, mutability: _, ident, colon_token, ty } = field;
+//             quote! { #(#attrs)* #vis #ident #colon_token &'a mut #ty }
+//           });
 
-          quote! {
-            #vis struct #new_ident<'a> {
-              #(#fields,)*
-            }
+//           quote! {
+//             #vis struct #new_ident<'a> {
+//               #(#fields,)*
+//             }
 
-            impl binmarshal::BinmarshalContext for #ident {
-              type MutableComplement<'a> = #new_ident<'a>;
-            }
-          }.into()
-        },
-        Fields::Unnamed(unnamed) => {
-          let fields = unnamed.unnamed.into_iter().map(|field| {
-            let Field { attrs, vis, mutability: _, ident: _, colon_token: _, ty } = field;
-            quote! { #(#attrs)* #vis &'a mut #ty }
-          });
+//             impl binmarshal::BinmarshalContext for #ident {
+//               type MutableComplement<'a> = #new_ident<'a>;
+//             }
+//           }.into()
+//         },
+//         Fields::Unnamed(unnamed) => {
+//           let fields = unnamed.unnamed.into_iter().map(|field| {
+//             let Field { attrs, vis, mutability: _, ident: _, colon_token: _, ty } = field;
+//             quote! { #(#attrs)* #vis &'a mut #ty }
+//           });
 
-          quote! {
-            #vis struct #new_ident<'a>(#(#fields,)*);
+//           quote! {
+//             #vis struct #new_ident<'a>(#(#fields,)*);
 
-            impl binmarshal::BinmarshalContext for #ident {
-              type MutableComplement<'a> = #new_ident<'a>;
-            }
-          }.into()
-        },
-        Fields::Unit => panic!("Context structs must have data!"),
-      };
+//             impl binmarshal::BinmarshalContext for #ident {
+//               type MutableComplement<'a> = #new_ident<'a>;
+//             }
+//           }.into()
+//         },
+//         Fields::Unit => panic!("Context structs must have data!"),
+//       };
 
-      out
-    },
-    syn::Data::Enum(_) => panic!("Context cannot be derived for an Enum - it must be a struct"),
-    syn::Data::Union(_) => panic!("Context cannot be derived for a Union - it must be a struct"),
-  }
-}
+//       out
+//     },
+//     syn::Data::Enum(_) => panic!("Context cannot be derived for an Enum - it must be a struct"),
+//     syn::Data::Union(_) => panic!("Context cannot be derived for a Union - it must be a struct"),
+//   }
+// }
 
 struct Magic {
   name: Ident,
