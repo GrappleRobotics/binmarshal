@@ -1,6 +1,6 @@
 [package]
 name = "binmarshal"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Pack and unpack structs and enums into and out of binary data streams."
 documentation = "https://docs.rs/binmarshal"

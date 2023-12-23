@@ -50,7 +50,7 @@ struct InnerStruct {
 #[marshal(ctx = Context2, tag = "ctx.a")]
 enum Selector {
   #[marshal(tag = "0x12")]
-  Something(#[marshal(ctx = "forward")] Maybe),
+  Something(#[marshal(ctx = "forward")] Maybe<u8, u16>),
   #[marshal(tag = "0x13")]
   Idk,
 }
@@ -58,22 +58,20 @@ enum Selector {
 
 #[derive(Debug, Clone, PartialEq, BinMarshal)]
 #[marshal(ctx = Context2, tag = "ctx.flag")]
-enum Maybe {
+enum Maybe<T: BinMarshal<()>, F: BinMarshal<()>> {
   #[marshal(tag = "true")]
-  True,
+  True(T),
   #[marshal(tag = "false")]
-  False
+  False(F)
 }
 
 fn main() {
   let mut v = RootStruct {
     a: 0x00,
-    b: InnerStruct { inner: Selector::Something(Maybe::True) }
+    b: InnerStruct { inner: Selector::Something(Maybe::True(16)) }
   };
 
   v.update(&mut ());
 
   assert_eq!(v.a, 0x12 | (0b1 << 4));
-
-
 }

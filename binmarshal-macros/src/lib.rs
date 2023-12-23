@@ -141,8 +141,23 @@ fn process_struct_field(i: usize, field: Field) -> (TokenStream, TokenStream, To
 #[proc_macro_derive(BinMarshal, attributes(marshal))]
 pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
   let DeriveInput {
-    attrs, vis: _, ident, generics: _, data
+    attrs, vis: _, ident, generics, data
   } = parse_macro_input!(input as DeriveInput);
+
+  let generics_without_bounds = generics.params.iter().map(|x| match x {
+    syn::GenericParam::Lifetime(lt) => {
+      let i = &lt.lifetime;
+      quote!{ #i }
+    },
+    syn::GenericParam::Type(ty) => {
+      let i = &ty.ident;
+      quote!{ #i }
+    },
+    syn::GenericParam::Const(c) => {
+      let c2 = &c.ident;
+      quote!{ #c2 }
+    },
+  });
 
   let attrs = StructOrEnumReceiver::from_attributes(&attrs).unwrap();
   let ctx_ty = if let Some(ctx) = attrs.ctx {
@@ -169,11 +184,11 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
       let to_unpack = it.clone().map(|x| x.4);
       let to_unpack_mutable = it.clone().map(|x| x.5);
       let to_update = it.clone().map(|x| x.6).filter_map(|x| x);
-      
+
       let out = quote! {
         #magic_definition
 
-        impl binmarshal::BinMarshal<#ctx_ty> for #ident {
+        impl #generics binmarshal::BinMarshal<#ctx_ty> for #ident<#(#generics_without_bounds),*>  {
           type Context = #ctx_ty;
 
           #[inline(always)]
@@ -320,7 +335,7 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
       let out = quote! {
         #magic_definition
 
-        impl binmarshal::BinMarshal<#ctx_ty> for #ident {
+        impl #generics binmarshal::BinMarshal<#ctx_ty> for #ident<#(#generics_without_bounds),*> {
           type Context = #ctx_ty;
 
           #[inline(always)]
