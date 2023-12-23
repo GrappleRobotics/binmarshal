@@ -116,7 +116,8 @@ fn process_struct_field(i: usize, field: Field) -> (TokenStream, TokenStream, To
         let field: TokenStream = parse_str(&x.field).unwrap();
         let member: TokenStream = parse_str(&x.member).unwrap();
 
-        let deref = match x.member.contains("ctx.") {
+        // Don't deref if it'll get implicitly derefed through indirection
+        let deref = match x.member.contains(".") {
             true => quote!{ #member },
             false => quote!{ *#member },
         };
