@@ -27,6 +27,20 @@ pub trait BinMarshal<Context = ()> : Sized {
   fn update(&mut self, ctx: &mut Context);
 }
 
+impl<C> BinMarshal<C> for () {
+  type Context = C;
+
+  fn write<W: BitWriter>(self, _writer: &mut W, _ctx: C) -> bool {
+    true
+  }
+
+  fn read(_view: &mut BitView<'_>, _ctx: C) -> Option<Self> {
+    Some(())
+  }
+
+  fn update(&mut self, _ctx: &mut C) { }
+}
+
 impl<C: Clone, T: BinMarshal<C> + Sized, const N: usize> BinMarshal<C> for [T; N] {
   type Context = ();
 
