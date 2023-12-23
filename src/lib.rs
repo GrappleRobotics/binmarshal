@@ -344,6 +344,36 @@ impl BinMarshal<()> for String {
   fn update(& mut self, _ctx: &mut ()) { }
 }
 
+impl<T: BinMarshal<()>, E: BinMarshal<()>> BinMarshal<()> for core::result::Result<T, E> {
+  type Context = ();
+
+  fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
+    match self {
+      Ok(ok) => {
+        0u8.write(writer, ()) && ok.write(writer, ())
+      },
+      Err(err) => {
+        1u8.write(writer, ()) && err.write(writer, ())
+      },
+    }
+  }
+
+  fn read(view: &mut BitView<'_>, _ctx: ()) -> Option<Self> {
+    let tag = u8::read(view, ());
+    match tag {
+      Some(0) => {
+        T::read(view, ()).map(|x| Ok(x))
+      },
+      Some(_) => {
+        E::read(view, ()).map(|x| Err(x))
+      },
+      None => None
+    }
+  }
+
+  fn update(&mut self, _ctx: &mut ()) { }
+}
+
 #[cfg(test)]
 mod tests {
   use crate::{BitSpecification, rw::{BufferBitWriter, BitView}, BinMarshal};
