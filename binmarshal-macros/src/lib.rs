@@ -71,7 +71,7 @@ fn process_struct_field(i: usize, field: Field) -> (TokenStream, TokenStream, To
       let inner = receiver.ctx_members.iter().map(|x| {
         let field: TokenStream = parse_str(&x.field).unwrap();
         let member: TokenStream = parse_str(&x.member).unwrap();
-        quote!{ #field: #member }
+        quote!{ #field: #member.clone() }
       });
       quote!{ binmarshal::SelfType::<<#ty as binmarshal::BinMarshal<_>>::Context> { #(#inner),* } }
     },
@@ -92,7 +92,7 @@ fn process_struct_field(i: usize, field: Field) -> (TokenStream, TokenStream, To
   };
 
   let unpack = quote! {
-    let #var_name = self.#accessor;
+    let #var_name = &self.#accessor;
   };
 
   let unpack_mutable = quote! {
@@ -193,7 +193,7 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
 
           #[inline(always)]
           #[allow(unused_variables)]
-          fn write<W: binmarshal::rw::BitWriter>(self, writer: &mut W, ctx: #ctx_ty) -> bool {
+          fn write<W: binmarshal::rw::BitWriter>(&self, writer: &mut W, ctx: #ctx_ty) -> bool {
             #(#to_unpack)*
             #magic_write && #to_write
           }
@@ -232,7 +232,7 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
           };
           
           (quote! {
-            <#tag_type as binmarshal::BinMarshal<_>>::write(_tag, writer, #ctx_val)
+            <#tag_type as binmarshal::BinMarshal<_>>::write(&_tag, writer, #ctx_val)
           },
           quote! {
             let _tag = <#tag_type as binmarshal::BinMarshal<_>>::read(view, #ctx_val)?;
@@ -365,7 +365,7 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
 
           #[inline(always)]
           #[allow(unused_variables)]
-          fn write<W: binmarshal::rw::BitWriter>(self, writer: &mut W, ctx: #ctx_ty) -> bool {
+          fn write<W: binmarshal::rw::BitWriter>(&self, writer: &mut W, ctx: #ctx_ty) -> bool {
             let _tag = match &self {
               #(#write_tag_match_variants),*
             };
@@ -568,12 +568,12 @@ fn gen_magic(m: Magic) -> proc_macro::TokenStream {
     impl binmarshal::BinMarshal<()> for #name {
       type Context = ();
 
-      fn write<W: binmarshal::rw::BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
-        #magic.to_owned().write(writer, _ctx)
+      fn write<W: binmarshal::rw::BitWriter>(&self, writer: &mut W, _ctx: ()) -> bool {
+        #magic.write(writer, _ctx)
       }
 
       fn read(view: &mut binmarshal::rw::BitView<'_>, _ctx: ()) -> Option<Self> {
-        if Some(#magic.to_owned()) == binmarshal::BinMarshal::<()>::read(view, _ctx) {
+        if Some(#magic) == binmarshal::BinMarshal::<()>::read(view, _ctx).as_ref() {
           Some(Self)
         } else {
           None

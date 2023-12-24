@@ -6,7 +6,7 @@ extern crate alloc;
 
 use core::{ops::{Deref, DerefMut}, mem::MaybeUninit, marker::PhantomData};
 
-use alloc::{vec::Vec, string::String};
+use alloc::{vec::Vec, string::String, borrow::Cow};
 pub use rw::*;
 
 pub use binmarshal_macros::{BinMarshal, Proxy};
@@ -26,7 +26,7 @@ pub struct BitSpecification<const BITS: usize>;
 pub trait BinMarshal<Context = ()> : Sized {
   type Context;
 
-  fn write<W: BitWriter>(self, writer: &mut W, ctx: Context) -> bool;
+  fn write<W: BitWriter>(&self, writer: &mut W, ctx: Context) -> bool;
   fn read(view: &mut BitView<'_>, ctx: Context) -> Option<Self>;
   fn update(&mut self, ctx: &mut Context);
 }
@@ -34,7 +34,7 @@ pub trait BinMarshal<Context = ()> : Sized {
 impl<C> BinMarshal<C> for () {
   type Context = C;
 
-  fn write<W: BitWriter>(self, _writer: &mut W, _ctx: C) -> bool {
+  fn write<W: BitWriter>(&self, _writer: &mut W, _ctx: C) -> bool {
     true
   }
 
@@ -49,7 +49,7 @@ impl<C: Clone, T: BinMarshal<C> + Sized, const N: usize> BinMarshal<C> for [T; N
   type Context = ();
 
   #[inline]
-  fn write<W: BitWriter>(self, writer: &mut W, ctx: C) -> bool {
+  fn write<W: BitWriter>(&self, writer: &mut W, ctx: C) -> bool {
     for v in self {
       if !v.write(writer, ctx.clone()) {
         return false;
@@ -69,7 +69,7 @@ impl<C: Clone, T: BinMarshal<C> + Sized, const N: usize> BinMarshal<C> for [T; N
 
   // Context updates can only map 1-to-1
   #[inline]
-  fn update(& mut self, _ctx: &mut C) { }
+  fn update(&mut self, _ctx: &mut C) { }
 }
 
 macro_rules! unsigned_numeric_impl {
@@ -78,7 +78,7 @@ macro_rules! unsigned_numeric_impl {
       type Context = BitSpecification<BITS>;
 
       #[inline(always)]
-      fn write<W: BitWriter>(self, writer: &mut W, _ctx: BitSpecification<BITS>) -> bool {
+      fn write<W: BitWriter>(&self, writer: &mut W, _ctx: BitSpecification<BITS>) -> bool {
         let offset = writer.bit_offset();
         if offset + BITS <= <$t>::BITS as usize {
           if let Some((arr, offset)) = writer.reserve_and_advance::<{<$t>::BITS as usize / 8}>(0, BITS) {
@@ -152,14 +152,14 @@ macro_rules! unsigned_numeric_impl {
       }
 
       #[inline(always)]
-      fn update(& mut self, _ctx: &mut BitSpecification<BITS>) { }
+      fn update(&mut self, _ctx: &mut BitSpecification<BITS>) { }
     }
 
     impl BinMarshal<()> for $t {
       type Context = ();
 
       #[inline(always)]
-      fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
+      fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> bool {
         self.write(writer, BitSpecification::<{<$t>::BITS as usize}> {})
       }
 
@@ -186,7 +186,7 @@ macro_rules! generic_numeric_impl {
       type Context = ();
 
       #[inline(always)]
-      fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
+      fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> bool {
         Buffer(self.to_be_bytes()).write(writer, _ctx)
       }
 
@@ -196,7 +196,7 @@ macro_rules! generic_numeric_impl {
       }
 
       #[inline(always)]
-      fn update(& mut self, _ctx: &mut ()) { }
+      fn update(&mut self, _ctx: &mut ()) { }
     }
   }
 }
@@ -214,8 +214,8 @@ impl BinMarshal<()> for bool {
   type Context = ();
 
   #[inline(always)]
-  fn write<W: BitWriter>(self, writer: &mut W, _: ()) -> bool {
-    (if self { 1u8 } else { 0u8 }).write(writer, BitSpecification::<1>)
+  fn write<W: BitWriter>(&self, writer: &mut W, _: ()) -> bool {
+    (if *self { 1u8 } else { 0u8 }).write(writer, BitSpecification::<1>)
   }
 
   #[inline(always)]
@@ -225,7 +225,7 @@ impl BinMarshal<()> for bool {
   }
 
   #[inline(always)]
-  fn update(& mut self, _ctx: &mut ()) { }
+  fn update(&mut self, _ctx: &mut ()) { }
 }
 
 // This makes the assumption that BITS <= 8
@@ -233,8 +233,8 @@ impl<const BITS: usize> BinMarshal<BitSpecification<BITS>> for bool {
   type Context = BitSpecification<BITS>;
 
   #[inline(always)]
-  fn write<W: BitWriter>(self, writer: &mut W, ctx: BitSpecification<BITS>) -> bool {
-    (if self { 1u8 } else { 0u8 }).write(writer, ctx)
+  fn write<W: BitWriter>(&self, writer: &mut W, ctx: BitSpecification<BITS>) -> bool {
+    (if *self { 1u8 } else { 0u8 }).write(writer, ctx)
   }
 
   #[inline(always)]
@@ -244,7 +244,7 @@ impl<const BITS: usize> BinMarshal<BitSpecification<BITS>> for bool {
   }
 
   #[inline(always)]
-  fn update(& mut self, _ctx: &mut BitSpecification<BITS>) { }
+  fn update(&mut self, _ctx: &mut BitSpecification<BITS>) { }
 }
 
 #[derive(Proxy)]
@@ -259,9 +259,9 @@ impl<L, T> LengthTaggedVec<L, T> {
 impl<C: Clone, T: BinMarshal<C> + Sized, L: TryFrom<usize> + TryInto<usize> + BinMarshal<()>> BinMarshal<C> for LengthTaggedVec<L, T> {
   type Context = C;
 
-  fn write<W: BitWriter>(self, writer: &mut W, ctx: C) -> bool {
+  fn write<W: BitWriter>(&self, writer: &mut W, ctx: C) -> bool {
     match L::try_from(self.0.len()) {
-      Ok(v) => v.write(writer, ()) && self.0.into_iter().map(|x| x.write(writer, ctx.clone())).reduce(|a, b| a && b).unwrap_or(true),
+      Ok(v) => v.write(writer, ()) && self.0.iter().map(|x| x.write(writer, ctx.clone())).reduce(|a, b| a && b).unwrap_or(true),
       Err(_) => false,
     }
   }
@@ -282,7 +282,7 @@ impl<C: Clone, T: BinMarshal<C> + Sized, L: TryFrom<usize> + TryInto<usize> + Bi
   }
 
   // Context updates can only map 1-to-1
-  fn update(& mut self, _ctx: &mut C) { }
+  fn update(&mut self, _ctx: &mut C) { }
 }
 
 #[derive(Proxy)]
@@ -292,7 +292,7 @@ impl<const N: usize> BinMarshal<()> for Buffer<N> {
   type Context = ();
 
   #[inline]
-  fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
+  fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> bool {
     writer.align(1);
     if let Some((arr, _offset)) = writer.reserve_and_advance::<N>(N, 0) {
       arr.copy_from_slice(&self[..]);
@@ -315,7 +315,7 @@ impl<const N: usize> BinMarshal<()> for Buffer<N> {
 impl BinMarshal<()> for String {
   type Context = ();
 
-  fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
+  fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> bool {
     writer.align(1);
     if let Some(arr) = writer.reserve_and_advance_aligned_slice(self.len() + 1) {
       let arr_str_bytes = &mut arr[0..self.len()];
@@ -345,13 +345,13 @@ impl BinMarshal<()> for String {
     }
   }
 
-  fn update(& mut self, _ctx: &mut ()) { }
+  fn update(&mut self, _ctx: &mut ()) { }
 }
 
 impl<T: BinMarshal<()>, E: BinMarshal<()>> BinMarshal<()> for core::result::Result<T, E> {
   type Context = ();
 
-  fn write<W: BitWriter>(self, writer: &mut W, _ctx: ()) -> bool {
+  fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> bool {
     match self {
       Ok(ok) => {
         0u8.write(writer, ()) && ok.write(writer, ())
@@ -382,7 +382,7 @@ impl<T: BinMarshal<()>, E: BinMarshal<()>> BinMarshal<()> for core::result::Resu
 impl BinMarshal<()> for anyhow::Error {
   type Context = ();
 
-  fn write<W: BitWriter>(self, writer: &mut W, ctx: ()) -> bool {
+  fn write<W: BitWriter>(&self, writer: &mut W, ctx: ()) -> bool {
     let str = alloc::format!("{}", self);
     str.write(writer, ctx)
   }
@@ -393,6 +393,25 @@ impl BinMarshal<()> for anyhow::Error {
   }
 
   fn update(&mut self, _ctx: &mut ()) { }
+}
+
+impl<'a, Ctx, T: BinMarshal<Ctx> + Clone> BinMarshal<Ctx> for alloc::borrow::Cow<'a, T>
+  where 
+{
+  type Context = Ctx;
+
+  fn write<W: BitWriter>(&self, writer: &mut W, ctx: Ctx) -> bool {
+    self.as_ref().write(writer, ctx)
+  }
+
+  fn read(view: &mut BitView<'_>, ctx: Ctx) -> Option<Self> {
+    let t = T::read(view, ctx);
+    t.map(Cow::Owned)
+  }
+
+  fn update(&mut self, ctx: &mut Ctx) {
+    self.to_mut().deref_mut().update(ctx)
+  }
 }
 
 #[cfg(test)]
