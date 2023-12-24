@@ -378,6 +378,23 @@ impl<T: BinMarshal<()>, E: BinMarshal<()>> BinMarshal<()> for core::result::Resu
   fn update(&mut self, _ctx: &mut ()) { }
 }
 
+#[cfg(feature = "anyhow")]
+impl BinMarshal<()> for anyhow::Error {
+  type Context = ();
+
+  fn write<W: BitWriter>(self, writer: &mut W, ctx: ()) -> bool {
+    let str = alloc::format!("{}", self);
+    str.write(writer, ctx)
+  }
+
+  fn read(view: &mut BitView<'_>, ctx: ()) -> Option<Self> {
+    let str = String::read(view, ctx);
+    str.map(|x| anyhow::Error::msg(x))
+  }
+
+  fn update(&mut self, _ctx: &mut ()) { }
+}
+
 #[cfg(test)]
 mod tests {
   use crate::{BitSpecification, rw::{BufferBitWriter, BitView}, BinMarshal};

@@ -1,6 +1,6 @@
 [package]
 name = "binmarshal"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 description = "Pack and unpack structs and enums into and out of binary data streams."
 documentation = "https://docs.rs/binmarshal"
@@ -12,12 +12,14 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = { version = "1.0.76", optional = true, default-features = false }
 binmarshal-macros = { version = "^0.2.0", path = "binmarshal-macros", default-features = false }
 schemars = { version = "0.8.12", optional = true }
 serde = { version = "1.0.159", optional = true }
 
 [features]
-std = []
+std = ["anyhow/std"]
 serde = ["binmarshal-macros/serde", "dep:serde"]
 schema = ["binmarshal-macros/schema", "dep:schemars"]
-default = ["serde", "schema"]
+anyhow = ["dep:anyhow"]
+default = ["serde", "schema", "anyhow"]
