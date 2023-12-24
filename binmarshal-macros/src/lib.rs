@@ -224,7 +224,7 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
           (quote! { true }, quote! { let _tag = #in_tag; }, Some(in_tag))
         },
         None => {
-          let tag_type = attrs.tag_type.unwrap();
+          let tag_type = attrs.tag_type.clone().unwrap();
 
           let ctx_val = match attrs.tag_bits {
             Some(bits) => quote!{ binmarshal::BitSpecification::<#bits> {} },
@@ -248,7 +248,7 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
 
         let inner_update = update_tag.clone().map(|x| quote!{ #x = #tag }).unwrap_or(quote!{ });
 
-        match variant.fields {
+        let r = match variant.fields {
           Fields::Named(named) => {
             let processed_fields = named.named.into_iter().enumerate().map(|(i, field)| process_struct_field(i, field));
 
@@ -324,16 +324,41 @@ pub fn derive_bin_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenSt
           Fields::Unit => {
             ( quote! { (#tag) => Some(Self::#name) }, quote!{ Self::#name => #tag }, quote! { Self::#name => { true } }, quote! { Self::#name => { #inner_update } })
           },
-        }
+        };
+
+        ( r.0, r.1, r.2, r.3, quote!{ #name }, quote!{ Self::#name => #tag })
       });
 
-      let read_match_variants = it.clone().map(|(read, _, _, _)| read);
-      let write_tag_match_variants = it.clone().map(|(_, write_tag, _, _)| write_tag);
-      let write_match_variants = it.clone().map(|(_, _, write, _)| write);
-      let update_variants = it.clone().map(|(_, _, _, update)| update);
+      let variants_name = syn::Ident::new(&format!("{}Tags", ident), ident.span());
+
+      let read_match_variants = it.clone().map(|v| v.0);
+      let write_tag_match_variants = it.clone().map(|v| v.1);
+      let write_match_variants = it.clone().map(|v| v.2);
+      let update_variants = it.clone().map(|v| v.3);
+      let variant_variants = it.clone().map(|v| v.4);
+      let variant_body = it.clone().map(|v| v.5);
+
+      let gwb = generics_without_bounds.clone();
+      let tt = attrs.tag_type.unwrap_or(Path::from_string("u8").unwrap());
 
       let out = quote! {
         #magic_definition
+
+        pub enum #variants_name {
+          #(#variant_variants),*
+        }
+
+        impl #variants_name {
+          pub fn to_tag(&self) -> #tt {
+            match self {
+              #(#variant_body),*
+            }
+          }
+        }
+
+        impl #generics binmarshal::HasTags for #ident<#(#gwb),*> {
+          type Tags = #variants_name;
+        }
 
         impl #generics binmarshal::BinMarshal<#ctx_ty> for #ident<#(#generics_without_bounds),*> {
           type Context = #ctx_ty;

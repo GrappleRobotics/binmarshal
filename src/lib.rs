@@ -16,6 +16,10 @@ pub mod rw;
 // See: https://github.com/rust-lang/rust/issues/86935
 pub type SelfType<T> = T;
 
+pub trait HasTags {
+  type Tags;
+}
+
 #[derive(Clone)]
 pub struct BitSpecification<const BITS: usize>;
 

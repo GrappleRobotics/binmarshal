@@ -1,4 +1,4 @@
-use binmarshal::BinMarshal;
+use binmarshal::{BinMarshal, HasTags};
 
 #[derive(Clone)]
 struct Context1 {
@@ -57,7 +57,7 @@ enum Selector {
 
 
 #[derive(Debug, Clone, PartialEq, BinMarshal)]
-#[marshal(ctx = Context2, tag = "ctx.flag")]
+#[marshal(ctx = Context2, tag = "ctx.flag", tag_type = "bool")]
 enum Maybe<T: BinMarshal<()>, F: BinMarshal<()>> {
   #[marshal(tag = "true")]
   True(T),
