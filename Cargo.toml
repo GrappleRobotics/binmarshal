@@ -1,6 +1,6 @@
 [package]
 name = "binmarshal"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 description = "Pack and unpack structs and enums into and out of binary data streams."
 documentation = "https://docs.rs/binmarshal"
@@ -22,4 +22,5 @@ std = ["anyhow/std"]
 serde = ["binmarshal-macros/serde", "dep:serde"]
 schema = ["binmarshal-macros/schema", "dep:schemars"]
 anyhow = ["dep:anyhow"]
+lasercan_nop_patch = []
 default = ["serde", "schema", "anyhow"]

@@ -352,6 +352,10 @@ impl<T: BinMarshal<()>, E: BinMarshal<()>> BinMarshal<()> for core::result::Resu
   type Context = ();
 
   fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> bool {
+    // We need this for alignment on the LaserCAN, due to a mistake in the 0.1.0 bootloader.
+    #[cfg(feature = "lasercan_nop_patch")]
+    unsafe { core::arch::asm!("nop") }
+
     match self {
       Ok(ok) => {
         0u8.write(writer, ()) && ok.write(writer, ())
