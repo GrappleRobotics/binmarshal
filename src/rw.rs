@@ -10,6 +10,15 @@ impl<'a> BitView<'a> {
   }
 
   #[inline(always)]
+  pub fn remaining(&self) -> (usize, usize) {
+    if self.offset_bit != 0 {
+      (self.data.len() - self.offset_byte - 1, 8 - self.offset_bit)
+    } else {
+      (self.data.len() - self.offset_byte, 0)
+    }
+  }
+
+  #[inline(always)]
   pub fn rewind(&mut self) {
     self.offset_byte = 0;
     self.offset_bit = 0;
