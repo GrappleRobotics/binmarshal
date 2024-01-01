@@ -1,4 +1,4 @@
-use binmarshal::{BinMarshal, HasTags};
+use binmarshal::*;
 
 #[derive(Clone)]
 struct Context1 {
@@ -11,12 +11,13 @@ struct Context2 {
   a: u8
 }
 
-#[derive(Debug, Clone, PartialEq, BinMarshal)]
+#[derive(Debug, Clone, PartialEq, Marshal, Demarshal, MarshalUpdate)]
 struct RootStruct {
   a: u8,
 
   #[marshal(
     ctx = "construct",
+    ctx_type = Context1,
     ctx_member(field="a", member="a")
   )]
   b: InnerStruct
@@ -39,14 +40,14 @@ impl From<Context2> for Context1 {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, BinMarshal)]
+#[derive(Debug, Clone, PartialEq, Marshal, Demarshal, MarshalUpdate)]
 #[marshal(ctx = Context1)]
 struct InnerStruct {
-  #[marshal(ctx = "coerce")]
+  #[marshal(ctx = "coerce", ctx_type = Context2)]
   inner: Selector
 }
 
-#[derive(Debug, Clone, PartialEq, BinMarshal)]
+#[derive(Debug, Clone, PartialEq, Marshal, Demarshal, MarshalUpdate)]
 #[marshal(ctx = Context2, tag = "ctx.a")]
 enum Selector {
   #[marshal(tag = "0x12")]
@@ -56,9 +57,9 @@ enum Selector {
 }
 
 
-#[derive(Debug, Clone, PartialEq, BinMarshal)]
+#[derive(Debug, Clone, PartialEq, Marshal, Demarshal, MarshalUpdate)]
 #[marshal(ctx = Context2, tag = "ctx.flag", tag_type = "bool")]
-enum Maybe<T: BinMarshal<()>, F: BinMarshal<()>> {
+enum Maybe<T: Marshal<()> + DemarshalOwned, F: Marshal<()> + DemarshalOwned> {
   #[marshal(tag = "true")]
   True(T),
   #[marshal(tag = "false")]

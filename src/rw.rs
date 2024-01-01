@@ -1,3 +1,11 @@
+use core::result::Result;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarshalRWError {
+  OutOfBounds,
+  InvalidContent,
+}
+
 pub struct BitView<'a> {
   data: &'a [u8],
   offset_byte: usize,
@@ -35,7 +43,7 @@ impl<'a> BitView<'a> {
   }
 
   #[inline(always)]
-  pub fn align(&mut self, byte_division: usize) -> bool {
+  pub fn align(&mut self, byte_division: usize) {
     if self.offset_bit > 0 {
       self.offset_bit = 0;
       self.offset_byte += 1;
@@ -44,35 +52,47 @@ impl<'a> BitView<'a> {
     if m != 0 {
       self.offset_byte += byte_division - m;
     }
-    true
   }
 
   #[inline(always)]
-  pub fn take<const N: usize>(&mut self, bytes: usize, bits: usize) -> Option<(&[u8; N], usize)> {
+  pub fn check_magic<const N: usize>(&mut self, magic: &[u8; N]) -> Result<(), MarshalRWError> {
+    self.align(1);
+    match self.take::<N>(N, 0) {
+      Ok((m, _)) if m == magic => Ok(()),
+      Ok(_) => Err(MarshalRWError::InvalidContent),
+      Err(e) => Err(e)
+    }
+  }
+
+  #[inline(always)]
+  pub fn take<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&[u8; N], usize), MarshalRWError> {
     // Remember - this is safe since we are map-ing. If anything is out of bounds, it will 
     // return None. This gives us a safe array type.
     let out = self.data.get(self.offset_byte..self.offset_byte+N).map(|x| {
       (unsafe { &*(x.as_ptr() as *const [_; N]) }, self.offset_bit)
     });
 
-    if out.is_some() {
+    if let Some(out) = out {
       self.offset_byte += (self.offset_bit + bits) / 8 + bytes;
       self.offset_bit = (self.offset_bit + bits) % 8;
-    }
 
-    out
+      Ok(out)
+    } else {
+      Err(MarshalRWError::OutOfBounds)
+    }
   }
 
   #[inline(always)]
-  pub fn take_aligned_slice(&mut self, bytes: usize) -> Option<&[u8]> {
+  pub fn take_aligned_slice(&mut self, bytes: usize) -> Result<&[u8], MarshalRWError> {
     self.align(1);
     let out = self.data.get(self.offset_byte..self.offset_byte + bytes);
 
-    if out.is_some() {
+    if let Some(out) = out {
       self.offset_byte += bytes;
+      Ok(out)
+    } else {
+      Err(MarshalRWError::OutOfBounds)
     }
-
-    out
   }
 
   #[inline(always)]
@@ -84,11 +104,23 @@ impl<'a> BitView<'a> {
 
 pub trait BitWriter {
   fn bit_offset(&self) -> usize;
-  fn align(&mut self, byte_division: usize) -> bool;
-  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Option<(&mut [u8; N], usize)>;
-  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Option<&mut [u8]>;
+  fn align(&mut self, byte_division: usize);
+  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&mut [u8; N], usize), MarshalRWError>;
+  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Result<&mut [u8], MarshalRWError>;
   fn advance(&mut self, bytes: usize, bits: usize);
   fn slice(&self) -> &[u8];
+
+  #[inline(always)]
+  fn write_magic<const N: usize>(&mut self, magic: &[u8; N]) -> Result<(), MarshalRWError> {
+    self.align(1);
+    match self.reserve_and_advance::<N>(N, 0) {
+      Ok(buf) => {
+        buf.0.copy_from_slice(magic);
+        Ok(())
+      },
+      Err(e) => Err(e),
+    }
+  }
 }
 
 pub struct BufferBitWriter<'a> {
@@ -110,7 +142,7 @@ impl<'a> BitWriter for BufferBitWriter<'a> {
   }
 
   #[inline(always)]
-  fn align(&mut self, byte_division: usize) -> bool {
+  fn align(&mut self, byte_division: usize) {
     if self.offset_bit > 0 {
       self.offset_bit = 0;
       self.offset_byte += 1;
@@ -119,34 +151,36 @@ impl<'a> BitWriter for BufferBitWriter<'a> {
     if m != 0 {
       self.offset_byte += byte_division - m;
     }
-    true
   }
 
   #[inline(always)]
-  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Option<(&mut [u8; N], usize)> {
+  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&mut [u8; N], usize), MarshalRWError> {
     // Remember - this is safe since we are map-ing. If anything is out of bounds, it will 
     // return None. This gives us a safe array type.
     let out = self.out.get_mut(self.offset_byte..self.offset_byte+N).map(|x| {
       (unsafe { &mut *(x.as_ptr() as *mut [_; N]) }, self.offset_bit)
     });
 
-    if out.is_some() {
+    if let Some(out) = out {
       self.offset_byte += (self.offset_bit + bits) / 8 + bytes;
       self.offset_bit = (self.offset_bit + bits) % 8;
+      Ok(out)
+    } else {
+      Err(MarshalRWError::OutOfBounds)
     }
-    out
   }
 
   #[inline(always)]
-  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Option<&mut [u8]> {
+  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Result<&mut [u8], MarshalRWError> {
     self.align(1);
     let out = self.out.get_mut(self.offset_byte..self.offset_byte + bytes);
 
-    if out.is_some() {
+    if let Some(out) = out {
       self.offset_byte += bytes;
+      Ok(out)
+    } else {
+      Err(MarshalRWError::OutOfBounds)
     }
-
-    out
   }
 
   #[inline(always)]
@@ -184,7 +218,7 @@ impl BitWriter for VecBitWriter {
   }
 
   #[inline(always)]
-  fn align(&mut self, byte_division: usize) -> bool {
+  fn align(&mut self, byte_division: usize) {
     if self.offset_bit > 0 {
       self.offset_bit = 0;
       self.offset_byte += 1;
@@ -193,11 +227,10 @@ impl BitWriter for VecBitWriter {
     if m != 0 {
       self.offset_byte += byte_division - m;
     }
-    true
   }
 
   #[inline(always)]
-  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Option<(&mut [u8; N], usize)> {
+  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&mut [u8; N], usize), MarshalRWError> {
     // Remember - this is safe since we are map-ing. If anything is out of bounds, it will 
     // return None. This gives us a safe array type.
     self.out.resize(self.offset_byte + N, 0x00);
@@ -205,24 +238,27 @@ impl BitWriter for VecBitWriter {
       (unsafe { &mut *(x.as_ptr() as *mut [_; N]) }, self.offset_bit)
     });
 
-    if out.is_some() {
+    if let Some(out) = out {
       self.offset_byte += (self.offset_bit + bits) / 8 + bytes;
       self.offset_bit = (self.offset_bit + bits) % 8;
+      Ok(out)
+    } else {
+      Err(MarshalRWError::OutOfBounds)
     }
-    out
   }
 
   #[inline(always)]
-  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Option<&mut [u8]> {
+  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Result<&mut [u8], MarshalRWError> {
     self.align(1);
     self.out.resize(self.offset_byte + bytes, 0x00);
     let out = self.out.get_mut(self.offset_byte..self.offset_byte + bytes);
 
-    if out.is_some() {
+    if let Some(out) = out {
       self.offset_byte += bytes;
+      Ok(out)
+    } else {
+      Err(MarshalRWError::OutOfBounds)
     }
-
-    out
   }
 
   #[inline(always)]

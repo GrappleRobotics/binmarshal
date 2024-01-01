@@ -1,4 +1,4 @@
-use binmarshal::{BinMarshal, rw::{BufferBitWriter, BitView, BitWriter}};
+use binmarshal::*;
 
 struct MyContext {
   variant: u8,
@@ -9,7 +9,7 @@ struct Var4Context {
   variant: u8
 }
 
-#[derive(Debug, Clone, PartialEq, BinMarshal)]
+#[derive(Debug, Clone, PartialEq, Marshal, Demarshal, MarshalUpdate)]
 #[marshal(ctx = Var4Context, tag = "ctx.variant")]
 enum Var4Inner {
   #[marshal(tag = "1")]
@@ -20,7 +20,7 @@ enum Var4Inner {
   Variant3,
 }
 
-#[derive(Debug, Clone, PartialEq, BinMarshal)]
+#[derive(Debug, Clone, PartialEq, Marshal, Demarshal, MarshalUpdate)]
 #[marshal(ctx = MyContext, tag = "ctx.variant")]
 enum MyEnum {
   #[marshal(tag = "1")]
@@ -31,23 +31,23 @@ enum MyEnum {
   Variant3,
   #[marshal(tag = "4")]
   Variant4 {
-    #[marshal(ctx = "construct", ctx_member(field = "variant", member = "ctx.inner"))]
+    #[marshal(ctx = "construct", ctx_type = Var4Context, ctx_member(field = "variant", member = "ctx.inner"))]
     inner: Var4Inner
   }
 }
 
-#[derive(Debug, Clone, PartialEq, BinMarshal)]
+#[derive(Debug, Clone, PartialEq, Marshal, Demarshal, MarshalUpdate)]
 #[marshal(ctx = MyContext)]
 struct InnerStruct {
   #[marshal(ctx = "forward")]
   en: MyEnum
 }
 
-#[derive(Debug, Clone, PartialEq, BinMarshal)]
+#[derive(Debug, Clone, PartialEq, Marshal, Demarshal, MarshalUpdate)]
 struct MyStruct {
   which_variant: u8,
   which_inner_variant: u8,
-  #[marshal(ctx = "construct", ctx_member(field = "variant", member = "which_variant"), ctx_member(field = "inner", member = "which_inner_variant"))]
+  #[marshal(ctx = "construct", ctx_type = MyContext, ctx_member(field = "variant", member = "which_variant"), ctx_member(field = "inner", member = "which_inner_variant"))]
   inner: InnerStruct
 }
 
@@ -67,11 +67,11 @@ fn main() {
 
   let mut bytes = [0u8; 256];
   let mut writer = BufferBitWriter::new(&mut bytes);
-  v.clone().write(&mut writer, ());
+  v.clone().write(&mut writer, ()).unwrap();
 
   let slice = writer.slice();
   assert_eq!(slice.len(), 5);
 
   let v2 = MyStruct::read(&mut BitView::new(slice), ());
-  assert_eq!(v2, Some(v));
+  assert_eq!(v2, Ok(v));
 }
