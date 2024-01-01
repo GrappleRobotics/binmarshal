@@ -44,11 +44,11 @@ fn main() {
   });
 
   let mut writer = VecBitWriter::new();
-  assert_eq!(v.clone().write(&mut writer, ()), Ok(()));
+  assert!(matches!(v.clone().write(&mut writer, ()), Ok(())));
 
   let slice = writer.slice();
   assert_eq!(slice.len(), 36);
 
   let v2 = MyEnum::read(&mut BitView::new(slice), ());
-  assert_eq!(v2, Ok(v));
+  assert!(matches!(v2, Ok(v2) if v2 == v));
 }

@@ -23,14 +23,12 @@ pub type SelfType<T> = T;
 pub struct BitSpecification<const BITS: usize>;
 
 pub trait Marshal<Context = ()> {
-  // type Context;
   type Error;
 
   fn write<W: BitWriter>(&self, writer: &mut W, ctx: Context) -> Result<(), Self::Error>;
 }
 
 pub trait Demarshal<'dm, Context = ()> : Sized {
-  // type Context;
   type Error;
   
   fn read(view: &mut BitView<'dm>, ctx: Context) -> Result<Self, Self::Error>;

@@ -1,7 +1,7 @@
 use darling::{FromField, FromAttributes, FromVariant, FromMeta};
 use proc_macro2::{TokenStream, Span};
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Type, Ident, parse_str, Path, Fields, Field, Generics};
+use syn::{parse_macro_input, DeriveInput, Type, Ident, parse_str, Path, Fields, Field, Generics, GenericParam, TypeParam};
 
 #[derive(Debug, FromAttributes)]
 #[darling(attributes(marshal))]
@@ -213,8 +213,8 @@ fn process_field_update(our_context_type: &TokenStream, i: usize, field: Field) 
   UpdateProcessedField { pf, update_body }
 }
 
-fn strip_bounds(generics: &Generics) -> Vec<TokenStream> {
-  generics.params.iter().map(|x| match x {
+fn strip_bounds<'a, I: Iterator<Item = &'a GenericParam>>(generics: I) -> TokenStream {
+  let g = generics.map(|x| match x {
     syn::GenericParam::Lifetime(lt) => {
       let i = &lt.lifetime;
       quote!{ #i }
@@ -227,6 +227,56 @@ fn strip_bounds(generics: &Generics) -> Vec<TokenStream> {
       let c2 = &c.ident;
       quote!{ #c2 }
     },
+  });
+  quote!{ #(#g),* }
+}
+
+// TODO: Some cases still require checking
+fn is_generic(generic_ty: &TypeParam, ty: &Type) -> bool {
+  match ty {
+    Type::Array(arr) => is_generic(generic_ty, &arr.elem),
+    Type::BareFn(f) => {
+      let output_generic = match &f.output {
+        syn::ReturnType::Default => false,
+        syn::ReturnType::Type(_, t) => is_generic(generic_ty, t),
+      };
+      let inputs_generic = f.inputs.iter().map(|x| is_generic(generic_ty, &x.ty)).reduce(|a, b| a || b).unwrap_or(false);
+      output_generic || inputs_generic
+    },
+    Type::Group(g) => is_generic(generic_ty, &g.elem),
+    Type::ImplTrait(_i) => false,    // TODO:
+    Type::Infer(_) => false,
+    Type::Macro(_) => false,
+    Type::Never(_) => false,
+    Type::Paren(p) => is_generic(generic_ty, &p.elem),
+    Type::Path(path) => {
+      path.path.segments.iter()
+        .map(|seg| seg.ident == generic_ty.ident || match &seg.arguments {
+          syn::PathArguments::None => false,
+          syn::PathArguments::AngleBracketed(_ab) => false,  // TODO:
+          syn::PathArguments::Parenthesized(_paren) => false,  // TODO:
+        })
+        .reduce(|a, b| a || b)
+        .unwrap_or(false)
+    },
+    Type::Ptr(ptr) => is_generic(generic_ty, &ptr.elem),
+    Type::Reference(r) => is_generic(generic_ty, &r.elem),
+    Type::Slice(s) => is_generic(generic_ty, &s.elem),
+    Type::TraitObject(_to) => false,   // TODO:
+    Type::Tuple(tup) => {
+      tup.elems.iter().map(|x| is_generic(generic_ty, x)).reduce(|a, b| a || b).unwrap_or(false)
+    },
+    Type::Verbatim(_) => false,
+    _ => false
+  }
+}
+
+fn filter_generics<'a>(generics: &'a Generics, types: &[Type]) -> Vec<&'a GenericParam> {
+  generics.params.iter().filter(|param| match param {
+    GenericParam::Type(gty) => {
+      types.iter().filter(|ty| is_generic(gty, &ty)).count() > 0
+    },
+    _ => false
   }).collect()
 }
 
@@ -238,7 +288,7 @@ pub fn derive_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream
     attrs, vis, ident, generics, data
   } = parse_macro_input!(input as DeriveInput);
 
-  let generics_without_bounds = strip_bounds(&generics);
+  let generics_without_bounds = strip_bounds(generics.params.iter());
 
   let attrs = StructOrEnumReceiver::from_attributes(&attrs).unwrap();
   let ctx_ty = if let Some(ctx) = attrs.ctx {
@@ -270,14 +320,13 @@ pub fn derive_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream
       let err_fields = it.clone().map(|x| x.err_body);
 
       let out = quote! {
-        #[derive(Debug, Clone, PartialEq, Eq)]
-        #vis enum #err_ident {
+        #vis enum #err_ident #generics {
           #magic_err_variant
           #(#err_fields),*
         }
 
-        impl #generics binmarshal::Marshal<#ctx_ty> for #ident<#(#generics_without_bounds),*> {
-          type Error = #err_ident;
+        impl #generics binmarshal::Marshal<#ctx_ty> for #ident<#generics_without_bounds> {
+          type Error = #err_ident<#generics_without_bounds>;
 
           fn write<W: binmarshal::rw::BitWriter>(&self, writer: &mut W, ctx: #ctx_ty) -> core::result::Result<(), Self::Error> {
             #magic_write;
@@ -327,7 +376,11 @@ pub fn derive_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream
         let to_write = processed_fields.clone().map(|t| t.write_body);
         let construct = processed_fields.clone().map(|t| t.pf.construct);
         let err_fields = processed_fields.clone().map(|t| t.err_body);
+        let types: Vec<_> = processed_fields.clone().map(|t| t.pf.ty).collect();
         
+        let filtered_generics = filter_generics(&generics, &types[..]);
+        let filtered_generics_stripped = strip_bounds(filtered_generics.iter().map(|x| *x));
+
         let write_tag = quote!{
           Self::#name { .. } => #tag
         };
@@ -351,11 +404,10 @@ pub fn derive_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream
           },
           false => {
             (Some(quote!{
-              #[derive(Debug, Clone, PartialEq, Eq)]
-              #vis enum #err_name {
+              #vis enum #err_name <#(#filtered_generics),*> {
                 #(#err_fields),*
               }
-            }), Some(quote! { #name(#err_name) }))
+            }), Some(quote! { #name(#err_name <#filtered_generics_stripped>) }))
           }
         };
 
@@ -372,15 +424,14 @@ pub fn derive_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream
       let out = quote! {
         #(#err_structs)*
 
-        #[derive(Debug, Clone, PartialEq, Eq)]
-        #vis enum #err_ident {
+        #vis enum #err_ident #generics {
           #magic_err_variant
           Tag(<#tt as Marshal<()>>::Error),
           #(#err_variants),*
         }
 
-        impl #generics binmarshal::Marshal<#ctx_ty> for #ident<#(#generics_without_bounds),*> {
-          type Error = #err_ident;
+        impl #generics binmarshal::Marshal<#ctx_ty> for #ident<#generics_without_bounds> {
+          type Error = #err_ident<#generics_without_bounds>;
 
           #[inline(always)]
           #[allow(unused_variables)]
@@ -414,7 +465,8 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
   } = parse_macro_input!(input as DeriveInput);
 
   let generics_inner = generics.params.iter();
-  let generics_without_bounds = strip_bounds(&generics);
+  let generics_inner = quote!{ #(#generics_inner),* };
+  let generics_without_bounds = strip_bounds(generics.params.iter());
 
   let attrs = StructOrEnumReceiver::from_attributes(&attrs).unwrap();
   let ctx_ty = if let Some(ctx) = attrs.ctx {
@@ -446,14 +498,13 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
       let err_fields = it.clone().map(|x| x.err_body);
 
       let out = quote! {
-        #[derive(Debug, Clone, PartialEq, Eq)]
-        #vis enum #err_ident<'dm> {
+        #vis enum #err_ident<'dm, #generics_inner> {
           #magic_err_variant
           #(#err_fields),*
         }
 
-        impl <'dm, #(#generics_inner),*> binmarshal::Demarshal<'dm, #ctx_ty> for #ident<#(#generics_without_bounds),*> {
-          type Error = #err_ident<'dm>;
+        impl <'dm, #generics_inner> binmarshal::Demarshal<'dm, #ctx_ty> for #ident<#generics_without_bounds> {
+          type Error = #err_ident<'dm, #generics_without_bounds>;
 
           fn read(view: &mut binmarshal::rw::BitView<'dm>, ctx: #ctx_ty) -> core::result::Result<Self, Self::Error> {
             #magic_read;
@@ -465,8 +516,6 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
           }
         }
       };
-
-      println!("{}", out.to_string());
 
       out.into()
     },
@@ -509,6 +558,10 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         let to_read = processed_fields.clone().map(|t| t.read_body);
         let construct = processed_fields.clone().map(|t| t.pf.construct);
         let err_fields = processed_fields.clone().map(|t| t.err_body);
+        let types: Vec<_> = processed_fields.clone().map(|t| t.pf.ty).collect();
+        
+        let filtered_generics = filter_generics(&generics, &types[..]);
+        let filtered_generics_stripped = strip_bounds(filtered_generics.iter().map(|x| *x));
 
         let read = match is_paren {
           true => quote!{
@@ -531,11 +584,10 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
           },
           false => {
             (Some(quote!{
-              #[derive(Debug, Clone, PartialEq, Eq)]
-              #vis enum #err_name<'dm> {
+              #vis enum #err_name<'dm, #(#filtered_generics),*> {
                 #(#err_fields),*
               }
-            }), Some(quote! { #name(#err_name<'dm>) }))
+            }), Some(quote! { #name(#err_name<'dm, #filtered_generics_stripped>) }))
           }
         };
 
@@ -551,16 +603,15 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
       let out = quote! {
         #(#err_structs)*
 
-        #[derive(Debug, Clone, PartialEq, Eq)]
-        #vis enum #err_ident<'dm> {
+        #vis enum #err_ident<'dm, #generics_inner> {
           #magic_err_variant
           Tag(<#tt as Demarshal<'dm, ()>>::Error),
           UnknownVariant(#tt),
           #(#err_variants),*
         }
 
-        impl<'dm, #(#generics_inner),*> binmarshal::Demarshal<'dm, #ctx_ty> for #ident<#(#generics_without_bounds),*> {
-          type Error = #err_ident<'dm>;
+        impl<'dm, #generics_inner> binmarshal::Demarshal<'dm, #ctx_ty> for #ident<#generics_without_bounds> {
+          type Error = #err_ident<'dm, #generics_without_bounds>;
 
           #[inline(always)]
           #[allow(unused_variables)]
@@ -575,7 +626,6 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         }
       };
 
-      println!("{}", out.to_string());
       out.into()
     },
     syn::Data::Union(_) => panic!("Don't know how to serialise unions!"),
@@ -590,7 +640,7 @@ pub fn derive_marshal_update(input: proc_macro::TokenStream) -> proc_macro::Toke
     attrs, vis: _, ident, generics, data
   } = parse_macro_input!(input as DeriveInput);
 
-  let generics_without_bounds = strip_bounds(&generics);
+  let generics_without_bounds = strip_bounds(generics.params.iter());
 
   let attrs = StructOrEnumReceiver::from_attributes(&attrs).unwrap();
   let ctx_ty = if let Some(ctx) = attrs.ctx {
@@ -607,7 +657,7 @@ pub fn derive_marshal_update(input: proc_macro::TokenStream) -> proc_macro::Toke
       let get_ref_mut = it.clone().map(|x| x.pf.get_ref_mut);
 
       let out = quote! {
-        impl #generics binmarshal::MarshalUpdate<#ctx_ty> for #ident<#(#generics_without_bounds),*> {
+        impl #generics binmarshal::MarshalUpdate<#ctx_ty> for #ident<#generics_without_bounds> {
           fn update(&mut self, ctx: &mut #ctx_ty) {
             #(#get_ref_mut;)*
             #(#to_update;)*
@@ -615,7 +665,6 @@ pub fn derive_marshal_update(input: proc_macro::TokenStream) -> proc_macro::Toke
         }
       };
 
-      println!("{}", out.to_string());
       out.into()
     },
     syn::Data::Enum(en) => {
@@ -664,7 +713,7 @@ pub fn derive_marshal_update(input: proc_macro::TokenStream) -> proc_macro::Toke
       });
 
       let out = quote! {
-        impl #generics binmarshal::MarshalUpdate<#ctx_ty> for #ident<#(#generics_without_bounds),*> {
+        impl #generics binmarshal::MarshalUpdate<#ctx_ty> for #ident<#generics_without_bounds> {
           fn update(&mut self, ctx: &mut #ctx_ty) {
             match self {
               #(#update_variants),*
@@ -673,7 +722,6 @@ pub fn derive_marshal_update(input: proc_macro::TokenStream) -> proc_macro::Toke
         }
       };
 
-      println!("{}", out.to_string());
       out.into()
     },
     syn::Data::Union(_) => panic!("Don't know how to serialise unions!"),

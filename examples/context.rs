@@ -67,11 +67,11 @@ fn main() {
 
   let mut bytes = [0u8; 256];
   let mut writer = BufferBitWriter::new(&mut bytes);
-  v.clone().write(&mut writer, ()).unwrap();
+  assert!(v.clone().write(&mut writer, ()).is_ok());
 
   let slice = writer.slice();
   assert_eq!(slice.len(), 5);
 
   let v2 = MyStruct::read(&mut BitView::new(slice), ());
-  assert_eq!(v2, Ok(v));
+  assert!(matches!(v2, Ok(v2) if v2 == v));
 }
