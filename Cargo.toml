@@ -13,7 +13,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = { version = "1.0.76", optional = true, default-features = false }
-binmarshal-macros = { version = "^0.2.0", path = "binmarshal-macros", default-features = false }
+binmarshal-macros = { version = "^1.0.0", path = "binmarshal-macros", default-features = false }
 schemars = { version = "0.8.12", optional = true }
 serde = { version = "1.0.159", optional = true }
 
