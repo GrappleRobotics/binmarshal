@@ -61,7 +61,7 @@ impl<'a> BitView<'a> {
   }
 
   #[inline(always)]
-  pub fn take<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&[u8; N], usize), MarshalError> {
+  pub fn take<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&'a [u8; N], usize), MarshalError> {
     // Remember - this is safe since we are map-ing. If anything is out of bounds, it will 
     // return None. This gives us a safe array type.
     let out = self.data.get(self.offset_byte..self.offset_byte+N).map(|x| {
@@ -79,7 +79,7 @@ impl<'a> BitView<'a> {
   }
 
   #[inline(always)]
-  pub fn take_aligned_slice(&mut self, bytes: usize) -> Result<&[u8], MarshalError> {
+  pub fn take_aligned_slice(&mut self, bytes: usize) -> Result<&'a [u8], MarshalError> {
     self.align(1);
     let out = self.data.get(self.offset_byte..self.offset_byte + bytes);
 
@@ -89,6 +89,22 @@ impl<'a> BitView<'a> {
     } else {
       Err(MarshalError::BufferTooSmall)
     }
+  }
+
+  #[inline(always)]
+  pub fn take_until(&mut self, sentinel: u8) -> Result<&'a [u8], MarshalError> {
+    self.align(1);
+    let end = (&self.data[self.offset_byte..]).into_iter().position(|x| *x == sentinel);
+    match end {
+      Some(end) => Ok(&self.data[self.offset_byte..self.offset_byte + end]),
+      None => Err(MarshalError::ExpectedSentinel),
+    }
+  }
+
+  #[inline(always)]
+  pub fn take_remaining(&mut self) -> Result<&'a [u8], MarshalError> {
+    self.align(1);
+    Ok(&self.data[self.offset_byte..])
   }
 
   #[inline(always)]

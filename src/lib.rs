@@ -6,17 +6,21 @@ extern crate alloc;
 
 pub mod rw;
 pub mod numeric;
+pub mod cow;
 
 pub use rw::*;
 pub use numeric::*;
+pub use cow::*;
 
 use core::{ops::{Deref, DerefMut}, result::Result, mem::MaybeUninit, marker::PhantomData};
 
-use alloc::{vec::Vec, string::String, borrow::Cow};
+use alloc::{vec::Vec, string::String};
 
 pub use binmarshal_macros::{Marshal, Demarshal, MarshalUpdate, Proxy};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))] 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum MarshalError {
   BufferTooSmall,
   IllegalValue {
@@ -25,6 +29,7 @@ pub enum MarshalError {
   },
   IllegalTag,
   CoercionError,
+  ExpectedSentinel
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,35 +204,70 @@ impl<'dm, T: Demarshal<'dm, ()>, E: Demarshal<'dm, ()>> Demarshal<'dm, ()> for c
   }
 }
 
-impl<'a, C, T: Marshal<C> + Clone> Marshal<C> for alloc::borrow::Cow<'a, T> {
-  fn write<W: BitWriter>(&self, writer: &mut W, ctx: C) -> Result<(), MarshalError> {
-    self.as_ref().write(writer, ctx)
+impl<'a> Marshal<()> for &'a str {
+  fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> Result<(), MarshalError> {
+    let arr = writer.reserve_and_advance_aligned_slice(self.len() + 1)?;
+    arr[0..self.len()].copy_from_slice(&self.as_bytes()[..]);
+    arr[arr.len() - 1] = 0;
+    Ok(())
   }
 }
 
-impl<'a, 'dm, C, T: Demarshal<'dm, C> + Clone> Demarshal<'dm, C> for alloc::borrow::Cow<'a, T> {
-  fn read(view: &mut BitView<'dm>, ctx: C) -> Result<Self, MarshalError> {
-    let t = T::read(view, ctx)?;
-    Ok(Cow::Owned(t))
+impl<'dm> Demarshal<'dm, ()> for &'dm str {
+  fn read(view: &mut BitView<'dm>, _ctx: ()) -> Result<Self, MarshalError> {
+    let buf = view.take_until(0u8)?;
+    Ok(unsafe { core::str::from_utf8_unchecked(buf) })
   }
 }
 
-// #[cfg(feature = "anyhow")]
-// impl BinMarshal<()> for anyhow::Error {
-//   type Context = ();
+// Payload is all-consuming, there is no tagged length
+#[derive(Proxy)]
+pub struct Payload<'a>(&'a [u8]);
 
-//   fn write<W: BitWriter>(&self, writer: &mut W, ctx: ()) -> bool {
-//     let str = alloc::format!("{}", self);
-//     str.write(writer, ctx)
-//   }
+impl<'a> Marshal<()> for Payload<'a> {
+  fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> Result<(), MarshalError> {
+    let arr = writer.reserve_and_advance_aligned_slice(self.0.len())?;
+    arr.copy_from_slice(self.0);
+    Ok(())
+  }
+}
 
-//   fn read<'a>(view: &mut BitView<'a>, ctx: ()) -> Option<Self> {
-//     let str = String::read(view, ctx);
-//     str.map(|x| anyhow::Error::msg(x))
-//   }
+impl<'dm> Demarshal<'dm, ()> for Payload<'dm> {
+  fn read(view: &mut BitView<'dm>, _ctx: ()) -> Result<Self, MarshalError> {
+    Ok(Payload(view.take_remaining()?))
+  }
+}
 
-//   fn update(&mut self, _ctx: &mut ()) { }
-// }
+#[derive(Proxy)]
+pub struct LengthTaggedPayload<'a, L>(pub &'a [u8], PhantomData<L>);
+
+impl<'a, L> LengthTaggedPayload<'a, L> {
+  pub fn new(v: &'a [u8]) -> Self {
+    Self(v, PhantomData)
+  }
+}
+
+impl<'a, L: TryFrom<usize> + Marshal<()>> Marshal<()> for LengthTaggedPayload<'a, L> {
+  fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> Result<(), MarshalError> {
+    match L::try_from(self.0.len()) {
+      Ok(v) => {
+        v.write(writer, ())?;
+        let arr = writer.reserve_and_advance_aligned_slice(self.0.len())?;
+        arr.copy_from_slice(self.0);
+        Ok(())
+      },
+      Err(_) => Err(MarshalError::CoercionError),
+    }
+  }
+}
+
+impl<'dm, L: TryInto<usize> + DemarshalOwned> Demarshal<'dm, ()> for LengthTaggedPayload<'dm, L> {
+  fn read(view: &mut BitView<'dm>, _ctx: ()) -> Result<Self, MarshalError> {
+    let l = L::read(view, ())?;
+    let as_usize = l.try_into().map_err(|_| MarshalError::CoercionError)?;
+    Ok(LengthTaggedPayload(view.take_aligned_slice(as_usize)?, PhantomData))
+  }
+}
 
 #[cfg(test)]
 mod tests {

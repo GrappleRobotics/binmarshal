@@ -1,7 +1,7 @@
 use darling::{FromField, FromAttributes, FromVariant, FromMeta};
 use proc_macro2::{TokenStream, Span};
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Type, Ident, parse_str, Path, Fields, Field, GenericParam};
+use syn::{parse_macro_input, DeriveInput, Type, Ident, parse_str, Path, Fields, Field, GenericParam, Lifetime};
 
 #[derive(Debug, FromAttributes)]
 #[darling(attributes(marshal))]
@@ -10,7 +10,7 @@ struct StructOrEnumReceiver {
   ctx: Option<Path>,
   tag_type: Option<Path>,
   tag: Option<String>,
-  tag_bits: Option<usize>
+  tag_bits: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, FromMeta)]
@@ -138,7 +138,7 @@ fn process_field_marshal(our_context_type: &TokenStream, i: usize, field: Field)
   MarshalProcessedField { pf, write_body }
 }
 
-fn process_field_demarshal(our_context_type: &TokenStream, i: usize, field: Field) -> DemarshalProcessedField {
+fn process_field_demarshal(our_context_type: &TokenStream, lifetime: &Lifetime, i: usize, field: Field) -> DemarshalProcessedField {
   let pf = process_field(our_context_type, i, &field);
   let ProcessedField { var_name, ty, receiver, context_type, context_body, .. } = &pf;
 
@@ -150,7 +150,7 @@ fn process_field_demarshal(our_context_type: &TokenStream, i: usize, field: Fiel
   let read_body = quote! {
     let #var_name = {
       #align;
-      <#ty as binmarshal::Demarshal<'dm, #context_type>>::read(view, #context_body)
+      <#ty as binmarshal::Demarshal<#lifetime, #context_type>>::read(view, #context_body)
     }?;
   };
 
@@ -356,6 +356,17 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
   let generics_inner = quote!{ #(#generics_inner),* };
   let generics_without_bounds = strip_bounds(generics.params.iter());
 
+  let lifetime = generics.params.iter().find_map(|x| match x {
+    GenericParam::Lifetime(lt) => Some(lt.lifetime.clone()),
+    _ => None
+  });
+
+  let lifetime_def = match lifetime {
+    None => quote!{ 'dm, },
+    Some(_) => quote!{},
+  };
+  let lifetime = lifetime.unwrap_or(Lifetime::new("'dm", ident.span()));
+
   let attrs = StructOrEnumReceiver::from_attributes(&attrs).unwrap();
   let ctx_ty = if let Some(ctx) = attrs.ctx {
     quote!{ #ctx }
@@ -374,14 +385,14 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
 
   match data {
     syn::Data::Struct(st) => {
-      let it = st.fields.into_iter().enumerate().map(|(i, field)| process_field_demarshal(&ctx_ty, i, field));
+      let it = st.fields.into_iter().enumerate().map(|(i, field)| process_field_demarshal(&ctx_ty, &lifetime, i, field));
 
       let to_read = it.clone().map(|x| x.read_body);
       let construct = it.clone().map(|x| x.pf.construct);
 
       let out = quote! {
-        impl <'dm, #generics_inner> binmarshal::Demarshal<'dm, #ctx_ty> for #ident<#generics_without_bounds> {
-          fn read(view: &mut binmarshal::rw::BitView<'dm>, ctx: #ctx_ty) -> core::result::Result<Self, binmarshal::MarshalError> {
+        impl <#lifetime_def #generics_inner> binmarshal::Demarshal<#lifetime, #ctx_ty> for #ident<#generics_without_bounds> {
+          fn read(view: &mut binmarshal::rw::BitView<#lifetime>, ctx: #ctx_ty) -> core::result::Result<Self, binmarshal::MarshalError> {
             #magic_read;
 
             #(#to_read)*
@@ -410,7 +421,7 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
           };
 
           quote! {
-            let _tag = <#tag_type as binmarshal::Demarshal<'dm, _>>::read(view, #ctx_val)?;
+            let _tag = <#tag_type as binmarshal::Demarshal<#lifetime, _>>::read(view, #ctx_val)?;
           }
         }
       };
@@ -426,7 +437,7 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
           Fields::Unit => (vec![], false),
         };
 
-        let processed_fields = fields.into_iter().enumerate().map(|(i, field)| process_field_demarshal(&ctx_ty, i, field));
+        let processed_fields = fields.into_iter().enumerate().map(|(i, field)| process_field_demarshal(&ctx_ty, &lifetime, i, field));
 
         let to_read = processed_fields.clone().map(|t| t.read_body);
         let construct = processed_fields.clone().map(|t| t.pf.construct);
@@ -450,10 +461,10 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
       });
 
       let out = quote! {
-        impl<'dm, #generics_inner> binmarshal::Demarshal<'dm, #ctx_ty> for #ident<#generics_without_bounds> {
+        impl<#lifetime_def #generics_inner> binmarshal::Demarshal<#lifetime, #ctx_ty> for #ident<#generics_without_bounds> {
           #[inline(always)]
           #[allow(unused_variables)]
-          fn read(view: &mut binmarshal::rw::BitView<'dm>, ctx: #ctx_ty) -> core::result::Result<Self, binmarshal::MarshalError> {
+          fn read(view: &mut binmarshal::rw::BitView<#lifetime>, ctx: #ctx_ty) -> core::result::Result<Self, binmarshal::MarshalError> {
             #magic_read;
             #read_tag;
             match _tag {
@@ -463,7 +474,7 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
           }
         }
       };
-
+      
       out.into()
     },
     syn::Data::Union(_) => panic!("Don't know how to serialise unions!"),
@@ -574,7 +585,7 @@ pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     attrs: _, vis: _, ident, generics, data
   } = parse_macro_input!(input as DeriveInput);
 
-  let generics_inner = &generics.params;
+  let _generics_inner = &generics.params;
 
   match data {
     syn::Data::Struct(st) => {
@@ -615,6 +626,7 @@ pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             #lt #(#ident_generics),* #gt
           };
 
+          #[allow(unused_mut)]
           let mut out = quote! {
             impl #generics From<#ft> for #ident #ident_generics {
               fn from(inner: #ft) -> Self {
@@ -668,7 +680,7 @@ pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                   }
               }
 
-              impl<'de, #generics_inner> serde::Deserialize<'de> for #ident #ident_generics where #ft: serde::Deserialize<'de> {
+              impl<'de, #_generics_inner> serde::Deserialize<'de> for #ident #ident_generics where #ft: serde::Deserialize<'de> {
                   fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
                   where
                       D: serde::Deserializer<'de>,
