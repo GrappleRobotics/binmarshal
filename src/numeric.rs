@@ -1,12 +1,10 @@
-use crate::{Marshal, Demarshal, BitSpecification, Buffer, rw::*};
+use crate::{Marshal, Demarshal, BitSpecification, Buffer, MarshalError, rw::*};
 
 macro_rules! unsigned_numeric_impl {
   ( $t:ty ) => {
     impl<const BITS: usize> Marshal<BitSpecification<BITS>> for $t {
-      type Error = MarshalRWError;
-
       #[inline(always)]
-      fn write<W: BitWriter>(&self, writer: &mut W, _ctx: BitSpecification<BITS>) -> Result<(), Self::Error> {
+      fn write<W: BitWriter>(&self, writer: &mut W, _ctx: BitSpecification<BITS>) -> Result<(), MarshalError> {
         let offset = writer.bit_offset();
         if offset + BITS <= <$t>::BITS as usize {
           let (arr, offset) = writer.reserve_and_advance::<{<$t>::BITS as usize / 8}>(0, BITS)?;
@@ -45,10 +43,8 @@ macro_rules! unsigned_numeric_impl {
     }
 
     impl<'dm, const BITS: usize> Demarshal<'dm, BitSpecification<BITS>> for $t {
-      type Error = MarshalRWError;
-
       #[inline(always)]
-      fn read(view: &mut BitView<'dm>, _ctx: BitSpecification<BITS>) -> Result<Self, Self::Error> {
+      fn read(view: &mut BitView<'dm>, _ctx: BitSpecification<BITS>) -> Result<Self, MarshalError> {
         let offset = view.bit_offset();
         if offset + BITS <= <$t>::BITS as usize {
           // It'll fit in as many bytes as we have
@@ -70,19 +66,15 @@ macro_rules! unsigned_numeric_impl {
     }
 
     impl Marshal<()> for $t {
-      type Error = MarshalRWError;
-
       #[inline(always)]
-      fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> Result<(), Self::Error> {
+      fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> Result<(), MarshalError> {
         self.write(writer, BitSpecification::<{<$t>::BITS as usize}>)
       }
     }
 
     impl<'de> Demarshal<'de, ()> for $t {
-      type Error = MarshalRWError;
-
       #[inline(always)]
-      fn read<'a>(view: &mut BitView<'a>, _ctx: ()) -> Result<Self, Self::Error> {
+      fn read<'a>(view: &mut BitView<'a>, _ctx: ()) -> Result<Self, MarshalError> {
         Self::read(view, BitSpecification::<{<$t>::BITS as usize}>)
       }
     }
@@ -98,19 +90,15 @@ unsigned_numeric_impl!(u128);
 macro_rules! generic_numeric_impl {
   ( $t:ty, $s:expr ) => {
     impl Marshal<()> for $t {
-      type Error = MarshalRWError;
-
       #[inline(always)]
-      fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> Result<(), Self::Error> {
+      fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> Result<(), MarshalError> {
         Buffer(self.to_be_bytes()).write(writer, _ctx)
       }
     }
 
     impl<'de> Demarshal<'de, ()> for $t {
-      type Error = MarshalRWError;
-
       #[inline(always)]
-      fn read<'a>(view: &mut BitView<'a>, _ctx: ()) -> Result<Self, Self::Error> {
+      fn read<'a>(view: &mut BitView<'a>, _ctx: ()) -> Result<Self, MarshalError> {
         Ok(Self::from_be_bytes(Buffer::<$s>::read(view, _ctx)?.0))
       }
     }
@@ -127,37 +115,29 @@ generic_numeric_impl!(f32, 4);
 generic_numeric_impl!(f64, 8);
 
 impl Marshal<()> for bool {
-  type Error = MarshalRWError;
-
   #[inline(always)]
-  fn write<W: BitWriter>(&self, writer: &mut W, _: ()) -> Result<(), Self::Error> {
+  fn write<W: BitWriter>(&self, writer: &mut W, _: ()) -> Result<(), MarshalError> {
     (if *self { 1u8 } else { 0u8 }).write(writer, ())
   }
 }
 
 impl<'dm> Demarshal<'dm, ()> for bool {
-  type Error = MarshalRWError;
-
   #[inline(always)]
-  fn read<'a>(view: &mut BitView<'a>, _: ()) -> Result<Self, Self::Error> {
+  fn read<'a>(view: &mut BitView<'a>, _: ()) -> Result<Self, MarshalError> {
     u8::read(view, ()).map(|x| x != 0)
   }
 }
 
 // This makes the assumption that BITS <= 8
 impl<const BITS: usize> Marshal<BitSpecification<BITS>> for bool {
-  type Error = MarshalRWError;
-
-  fn write<W: BitWriter>(&self, writer: &mut W, ctx: BitSpecification<BITS>) -> Result<(), Self::Error> {
+  fn write<W: BitWriter>(&self, writer: &mut W, ctx: BitSpecification<BITS>) -> Result<(), MarshalError> {
     (if *self { 1u8 } else { 0u8 }).write(writer, ctx)
   }
 }
 
 impl<'dm, const BITS: usize> Demarshal<'dm, BitSpecification<BITS>> for bool {
-  type Error = MarshalRWError;
-
   #[inline(always)]
-  fn read<'a>(view: &mut BitView<'a>, ctx: BitSpecification<BITS>) -> Result<Self, Self::Error> {
+  fn read<'a>(view: &mut BitView<'a>, ctx: BitSpecification<BITS>) -> Result<Self, MarshalError> {
     u8::read(view, ctx).map(|x| x != 0)
   }
 }

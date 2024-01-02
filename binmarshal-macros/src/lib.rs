@@ -1,7 +1,7 @@
 use darling::{FromField, FromAttributes, FromVariant, FromMeta};
 use proc_macro2::{TokenStream, Span};
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Type, Ident, parse_str, Path, Fields, Field, Generics, GenericParam, TypeParam};
+use syn::{parse_macro_input, DeriveInput, Type, Ident, parse_str, Path, Fields, Field, GenericParam};
 
 #[derive(Debug, FromAttributes)]
 #[darling(attributes(marshal))]
@@ -64,13 +64,11 @@ struct ProcessedField {
 
 struct MarshalProcessedField {
   pf: ProcessedField,
-  err_body: TokenStream,
   write_body: TokenStream,
 }
 
 struct DemarshalProcessedField {
   pf: ProcessedField,
-  err_body: TokenStream,
   read_body: TokenStream,
 }
 
@@ -121,56 +119,42 @@ fn process_field(our_context_type: &TokenStream, i: usize, field: &Field) -> Pro
   }
 }
 
-fn process_field_marshal(our_context_type: &TokenStream, err_type: &Ident, i: usize, field: Field, map_err: Option<TokenStream>) -> MarshalProcessedField {
+fn process_field_marshal(our_context_type: &TokenStream, i: usize, field: Field) -> MarshalProcessedField {
   let pf = process_field(our_context_type, i, &field);
   let ProcessedField { var_name, ty, receiver, context_type, context_body, .. } = &pf;
-
-  let err_body = quote! {
-    #[allow(non_camel_case_types)]
-    #var_name(<#ty as binmarshal::Marshal<#context_type>>::Error)
-  };
 
   let align = match receiver.align {
     Some(align) => quote!{ writer.align(#align) },
     None => quote!{}
   };
 
-  let map_err = map_err.map(|x| quote!{ .map_err(#x) });
-
   let write_body = quote! {
     {
       #align;
-      <#ty as binmarshal::Marshal<#context_type>>::write(#var_name, writer, #context_body).map_err(#err_type::#var_name)#map_err
+      <#ty as binmarshal::Marshal<#context_type>>::write(#var_name, writer, #context_body)
     }?
   };
 
-  MarshalProcessedField { pf, err_body, write_body }
+  MarshalProcessedField { pf, write_body }
 }
 
-fn process_field_demarshal(our_context_type: &TokenStream, err_type: &Ident, i: usize, field: Field, map_err: Option<TokenStream>) -> DemarshalProcessedField {
+fn process_field_demarshal(our_context_type: &TokenStream, i: usize, field: Field) -> DemarshalProcessedField {
   let pf = process_field(our_context_type, i, &field);
   let ProcessedField { var_name, ty, receiver, context_type, context_body, .. } = &pf;
-
-  let err_body = quote! {
-    #[allow(non_camel_case_types)]
-    #var_name(<#ty as binmarshal::Demarshal<'dm, #context_type>>::Error)
-  };
 
   let align = match receiver.align {
     Some(align) => quote!{ view.align(#align) },
     None => quote!{}
   };
 
-  let map_err = map_err.map(|x| quote!{ .map_err(#x) });
-
   let read_body = quote! {
     let #var_name = {
       #align;
-      <#ty as binmarshal::Demarshal<'dm, #context_type>>::read(view, #context_body).map_err(#err_type::#var_name)#map_err
+      <#ty as binmarshal::Demarshal<'dm, #context_type>>::read(view, #context_body)
     }?;
   };
 
-  DemarshalProcessedField { pf, err_body, read_body }
+  DemarshalProcessedField { pf, read_body }
 }
 
 fn process_field_update(our_context_type: &TokenStream, i: usize, field: Field) -> UpdateProcessedField {
@@ -231,61 +215,12 @@ fn strip_bounds<'a, I: Iterator<Item = &'a GenericParam>>(generics: I) -> TokenS
   quote!{ #(#g),* }
 }
 
-// TODO: Some cases still require checking
-fn is_generic(generic_ty: &TypeParam, ty: &Type) -> bool {
-  match ty {
-    Type::Array(arr) => is_generic(generic_ty, &arr.elem),
-    Type::BareFn(f) => {
-      let output_generic = match &f.output {
-        syn::ReturnType::Default => false,
-        syn::ReturnType::Type(_, t) => is_generic(generic_ty, t),
-      };
-      let inputs_generic = f.inputs.iter().map(|x| is_generic(generic_ty, &x.ty)).reduce(|a, b| a || b).unwrap_or(false);
-      output_generic || inputs_generic
-    },
-    Type::Group(g) => is_generic(generic_ty, &g.elem),
-    Type::ImplTrait(_i) => false,    // TODO:
-    Type::Infer(_) => false,
-    Type::Macro(_) => false,
-    Type::Never(_) => false,
-    Type::Paren(p) => is_generic(generic_ty, &p.elem),
-    Type::Path(path) => {
-      path.path.segments.iter()
-        .map(|seg| seg.ident == generic_ty.ident || match &seg.arguments {
-          syn::PathArguments::None => false,
-          syn::PathArguments::AngleBracketed(_ab) => false,  // TODO:
-          syn::PathArguments::Parenthesized(_paren) => false,  // TODO:
-        })
-        .reduce(|a, b| a || b)
-        .unwrap_or(false)
-    },
-    Type::Ptr(ptr) => is_generic(generic_ty, &ptr.elem),
-    Type::Reference(r) => is_generic(generic_ty, &r.elem),
-    Type::Slice(s) => is_generic(generic_ty, &s.elem),
-    Type::TraitObject(_to) => false,   // TODO:
-    Type::Tuple(tup) => {
-      tup.elems.iter().map(|x| is_generic(generic_ty, x)).reduce(|a, b| a || b).unwrap_or(false)
-    },
-    Type::Verbatim(_) => false,
-    _ => false
-  }
-}
-
-fn filter_generics<'a>(generics: &'a Generics, types: &[Type]) -> Vec<&'a GenericParam> {
-  generics.params.iter().filter(|param| match param {
-    GenericParam::Type(gty) => {
-      types.iter().filter(|ty| is_generic(gty, &ty)).count() > 0
-    },
-    _ => false
-  }).collect()
-}
-
 // Marshal
 
 #[proc_macro_derive(Marshal, attributes(marshal))]
 pub fn derive_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
   let DeriveInput {
-    attrs, vis, ident, generics, data
+    attrs, vis: _, ident, generics, data
   } = parse_macro_input!(input as DeriveInput);
 
   let generics_without_bounds = strip_bounds(generics.params.iter());
@@ -297,38 +232,25 @@ pub fn derive_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream
     quote! { () }
   };
 
-  let err_ident = syn::Ident::new(&format!("{}MarshalErr", ident), ident.span());
-
-  let (magic_err_variant, magic_write) = match attrs.magic {
+  let magic_write = match attrs.magic {
     Some(lit) => {
-      (
-        Some(quote!{ Magic(binmarshal::rw::MarshalRWError), }),
-        Some(quote!{
-          writer.write_magic(#lit).map_err(#err_ident::Magic)?
-        })
-      )
+      Some(quote!{
+        writer.write_magic(#lit)?
+      })
     },
-    None => (None, None)
+    None => None
   };
 
   match data {
     syn::Data::Struct(st) => {
-      let it = st.fields.into_iter().enumerate().map(|(i, field)| process_field_marshal(&ctx_ty, &err_ident, i, field, None));
+      let it = st.fields.into_iter().enumerate().map(|(i, field)| process_field_marshal(&ctx_ty, i, field));
 
       let to_write = it.clone().map(|x| x.write_body);
       let refs = it.clone().map(|x| x.pf.get_ref);
-      let err_fields = it.clone().map(|x| x.err_body);
 
       let out = quote! {
-        #vis enum #err_ident #generics {
-          #magic_err_variant
-          #(#err_fields),*
-        }
-
         impl #generics binmarshal::Marshal<#ctx_ty> for #ident<#generics_without_bounds> {
-          type Error = #err_ident<#generics_without_bounds>;
-
-          fn write<W: binmarshal::rw::BitWriter>(&self, writer: &mut W, ctx: #ctx_ty) -> core::result::Result<(), Self::Error> {
+          fn write<W: binmarshal::rw::BitWriter>(&self, writer: &mut W, ctx: #ctx_ty) -> core::result::Result<(), binmarshal::MarshalError> {
             #magic_write;
 
             #(#refs;)*
@@ -353,7 +275,7 @@ pub fn derive_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream
           };
 
           quote! {
-            <#tag_type as binmarshal::Marshal<_>>::write(&_tag, writer, #ctx_val).map_err(#err_ident::Tag)?
+            <#tag_type as binmarshal::Marshal<_>>::write(&_tag, writer, #ctx_val)?
           }
         }
       };
@@ -363,23 +285,16 @@ pub fn derive_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream
         let name = receiver.ident;
         let tag: TokenStream = parse_str(&receiver.tag).unwrap();
 
-        let err_name = syn::Ident::new(&format!("{}{}MarshalErr", ident.clone(), name.clone()), name.span());
-
-        let (fields, is_unit, is_paren) = match variant.fields {
-          Fields::Named(named) => (named.named.into_iter().collect(), false, false),
-          Fields::Unnamed(unnamed) => (unnamed.unnamed.into_iter().collect(), false, true),
-          Fields::Unit => (vec![], true, false),
+        let (fields, is_paren) = match variant.fields {
+          Fields::Named(named) => (named.named.into_iter().collect(), false),
+          Fields::Unnamed(unnamed) => (unnamed.unnamed.into_iter().collect(), true),
+          Fields::Unit => (vec![], false),
         };
 
-        let processed_fields = fields.into_iter().enumerate().map(|(i, field)| process_field_marshal(&ctx_ty, &err_name, i, field, Some(quote!{ #err_ident::#name })));
+        let processed_fields = fields.into_iter().enumerate().map(|(i, field)| process_field_marshal(&ctx_ty, i, field));
 
         let to_write = processed_fields.clone().map(|t| t.write_body);
         let construct = processed_fields.clone().map(|t| t.pf.construct);
-        let err_fields = processed_fields.clone().map(|t| t.err_body);
-        let types: Vec<_> = processed_fields.clone().map(|t| t.pf.ty).collect();
-        
-        let filtered_generics = filter_generics(&generics, &types[..]);
-        let filtered_generics_stripped = strip_bounds(filtered_generics.iter().map(|x| *x));
 
         let write_tag = quote!{
           Self::#name { .. } => #tag
@@ -398,44 +313,17 @@ pub fn derive_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream
           },
         };
 
-        let (err_struct, err_variant) = match is_unit {
-          true => {
-            (None, None)
-          },
-          false => {
-            (Some(quote!{
-              #vis enum #err_name <#(#filtered_generics),*> {
-                #(#err_fields),*
-              }
-            }), Some(quote! { #name(#err_name <#filtered_generics_stripped>) }))
-          }
-        };
-
-        (write_tag, write, err_struct, err_variant)
+        (write_tag, write)
       });
 
       let write_tag_variants = it.clone().map(|v| v.0);
       let write_variants = it.clone().map(|v| v.1);
-      let err_structs = it.clone().map(|v| v.2).filter_map(|x| x);
-      let err_variants = it.clone().map(|v| v.3).filter_map(|x| x);
-
-      let tt = attrs.tag_type.unwrap_or(Path::from_string("u8").unwrap());
 
       let out = quote! {
-        #(#err_structs)*
-
-        #vis enum #err_ident #generics {
-          #magic_err_variant
-          Tag(<#tt as Marshal<()>>::Error),
-          #(#err_variants),*
-        }
-
         impl #generics binmarshal::Marshal<#ctx_ty> for #ident<#generics_without_bounds> {
-          type Error = #err_ident<#generics_without_bounds>;
-
           #[inline(always)]
           #[allow(unused_variables)]
-          fn write<W: binmarshal::rw::BitWriter>(&self, writer: &mut W, ctx: #ctx_ty) -> core::result::Result<(), Self::Error> {
+          fn write<W: binmarshal::rw::BitWriter>(&self, writer: &mut W, ctx: #ctx_ty) -> core::result::Result<(), binmarshal::MarshalError> {
             let _tag = match &self {
               #(#write_tag_variants),*
             };
@@ -461,7 +349,7 @@ pub fn derive_marshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream
 #[proc_macro_derive(Demarshal, attributes(marshal))]
 pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
   let DeriveInput {
-    attrs, vis, ident, generics, data
+    attrs, vis: _, ident, generics, data
   } = parse_macro_input!(input as DeriveInput);
 
   let generics_inner = generics.params.iter();
@@ -475,38 +363,25 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
     quote! { () }
   };
 
-  let err_ident = syn::Ident::new(&format!("{}DemarshalErr", ident), ident.span());
-
-  let (magic_err_variant, magic_read) = match attrs.magic {
+  let magic_read = match attrs.magic {
     Some(lit) => {
-      (
-        Some(quote!{ Magic(binmarshal::rw::MarshalRWError), }),
-        Some(quote!{
-          view.check_magic(#lit).map_err(#err_ident::Magic)?
-        })
-      )
+      Some(quote!{
+        view.check_magic(#lit)?
+      })
     },
-    None => (None, None)
+    None => None
   };
 
   match data {
     syn::Data::Struct(st) => {
-      let it = st.fields.into_iter().enumerate().map(|(i, field)| process_field_demarshal(&ctx_ty, &err_ident, i, field, None));
+      let it = st.fields.into_iter().enumerate().map(|(i, field)| process_field_demarshal(&ctx_ty, i, field));
 
       let to_read = it.clone().map(|x| x.read_body);
       let construct = it.clone().map(|x| x.pf.construct);
-      let err_fields = it.clone().map(|x| x.err_body);
 
       let out = quote! {
-        #vis enum #err_ident<'dm, #generics_inner> {
-          #magic_err_variant
-          #(#err_fields),*
-        }
-
         impl <'dm, #generics_inner> binmarshal::Demarshal<'dm, #ctx_ty> for #ident<#generics_without_bounds> {
-          type Error = #err_ident<'dm, #generics_without_bounds>;
-
-          fn read(view: &mut binmarshal::rw::BitView<'dm>, ctx: #ctx_ty) -> core::result::Result<Self, Self::Error> {
+          fn read(view: &mut binmarshal::rw::BitView<'dm>, ctx: #ctx_ty) -> core::result::Result<Self, binmarshal::MarshalError> {
             #magic_read;
 
             #(#to_read)*
@@ -535,33 +410,26 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
           };
 
           quote! {
-            let _tag = <#tag_type as binmarshal::Demarshal<'dm, _>>::read(view, #ctx_val).map_err(#err_ident::Tag)?;
+            let _tag = <#tag_type as binmarshal::Demarshal<'dm, _>>::read(view, #ctx_val)?;
           }
         }
       };
 
-      let it = en.variants.into_iter().map(|variant| {
+      let read_variants = en.variants.into_iter().map(|variant| {
         let receiver = EnumVariantReceiver::from_variant(&variant).unwrap();
         let name = receiver.ident;
         let tag: TokenStream = parse_str(&receiver.tag).unwrap();
 
-        let err_name = syn::Ident::new(&format!("{}{}DemarshalErr", ident.clone(), name.clone()), name.span());
-
-        let (fields, is_unit, is_paren) = match variant.fields {
-          Fields::Named(named) => (named.named.into_iter().collect(), false, false),
-          Fields::Unnamed(unnamed) => (unnamed.unnamed.into_iter().collect(), false, true),
-          Fields::Unit => (vec![], true, false),
+        let (fields, is_paren) = match variant.fields {
+          Fields::Named(named) => (named.named.into_iter().collect(), false),
+          Fields::Unnamed(unnamed) => (unnamed.unnamed.into_iter().collect(), true),
+          Fields::Unit => (vec![], false),
         };
 
-        let processed_fields = fields.into_iter().enumerate().map(|(i, field)| process_field_demarshal(&ctx_ty, &err_name, i, field, Some(quote!{ #err_ident::#name })));
+        let processed_fields = fields.into_iter().enumerate().map(|(i, field)| process_field_demarshal(&ctx_ty, i, field));
 
         let to_read = processed_fields.clone().map(|t| t.read_body);
         let construct = processed_fields.clone().map(|t| t.pf.construct);
-        let err_fields = processed_fields.clone().map(|t| t.err_body);
-        let types: Vec<_> = processed_fields.clone().map(|t| t.pf.ty).collect();
-        
-        let filtered_generics = filter_generics(&generics, &types[..]);
-        let filtered_generics_stripped = strip_bounds(filtered_generics.iter().map(|x| *x));
 
         let read = match is_paren {
           true => quote!{
@@ -578,49 +446,19 @@ pub fn derive_demarshal(input: proc_macro::TokenStream) -> proc_macro::TokenStre
           },
         };
 
-        let (err_struct, err_variant) = match is_unit {
-          true => {
-            (None, None)
-          },
-          false => {
-            (Some(quote!{
-              #vis enum #err_name<'dm, #(#filtered_generics),*> {
-                #(#err_fields),*
-              }
-            }), Some(quote! { #name(#err_name<'dm, #filtered_generics_stripped>) }))
-          }
-        };
-
-        (read, err_struct, err_variant)
+        read
       });
 
-      let read_variants = it.clone().map(|v| v.0);
-      let err_structs = it.clone().map(|v| v.1).filter_map(|x| x);
-      let err_variants = it.clone().map(|v| v.2).filter_map(|x| x);
-
-      let tt = attrs.tag_type.unwrap_or(Path::from_string("u8").unwrap());
-
       let out = quote! {
-        #(#err_structs)*
-
-        #vis enum #err_ident<'dm, #generics_inner> {
-          #magic_err_variant
-          Tag(<#tt as Demarshal<'dm, ()>>::Error),
-          UnknownVariant(#tt),
-          #(#err_variants),*
-        }
-
         impl<'dm, #generics_inner> binmarshal::Demarshal<'dm, #ctx_ty> for #ident<#generics_without_bounds> {
-          type Error = #err_ident<'dm, #generics_without_bounds>;
-
           #[inline(always)]
           #[allow(unused_variables)]
-          fn read(view: &mut binmarshal::rw::BitView<'dm>, ctx: #ctx_ty) -> core::result::Result<Self, Self::Error> {
+          fn read(view: &mut binmarshal::rw::BitView<'dm>, ctx: #ctx_ty) -> core::result::Result<Self, binmarshal::MarshalError> {
             #magic_read;
             #read_tag;
             match _tag {
               #(#read_variants),*,
-              _ => Err(#err_ident::UnknownVariant(_tag))
+              _ => Err(binmarshal::MarshalError::IllegalTag)
             }
           }
         }

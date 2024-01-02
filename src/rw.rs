@@ -1,10 +1,6 @@
 use core::result::Result;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MarshalRWError {
-  OutOfBounds,
-  InvalidContent,
-}
+use crate::MarshalError;
 
 pub struct BitView<'a> {
   data: &'a [u8],
@@ -55,17 +51,17 @@ impl<'a> BitView<'a> {
   }
 
   #[inline(always)]
-  pub fn check_magic<const N: usize>(&mut self, magic: &[u8; N]) -> Result<(), MarshalRWError> {
+  pub fn check_magic<const N: usize>(&mut self, magic: &[u8; N]) -> Result<(), MarshalError> {
     self.align(1);
     match self.take::<N>(N, 0) {
       Ok((m, _)) if m == magic => Ok(()),
-      Ok(_) => Err(MarshalRWError::InvalidContent),
+      Ok(_) => Err(MarshalError::IllegalValue { byte_offset: self.offset_byte, bit_offset: self.offset_bit }),
       Err(e) => Err(e)
     }
   }
 
   #[inline(always)]
-  pub fn take<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&[u8; N], usize), MarshalRWError> {
+  pub fn take<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&[u8; N], usize), MarshalError> {
     // Remember - this is safe since we are map-ing. If anything is out of bounds, it will 
     // return None. This gives us a safe array type.
     let out = self.data.get(self.offset_byte..self.offset_byte+N).map(|x| {
@@ -78,12 +74,12 @@ impl<'a> BitView<'a> {
 
       Ok(out)
     } else {
-      Err(MarshalRWError::OutOfBounds)
+      Err(MarshalError::BufferTooSmall)
     }
   }
 
   #[inline(always)]
-  pub fn take_aligned_slice(&mut self, bytes: usize) -> Result<&[u8], MarshalRWError> {
+  pub fn take_aligned_slice(&mut self, bytes: usize) -> Result<&[u8], MarshalError> {
     self.align(1);
     let out = self.data.get(self.offset_byte..self.offset_byte + bytes);
 
@@ -91,7 +87,7 @@ impl<'a> BitView<'a> {
       self.offset_byte += bytes;
       Ok(out)
     } else {
-      Err(MarshalRWError::OutOfBounds)
+      Err(MarshalError::BufferTooSmall)
     }
   }
 
@@ -105,13 +101,13 @@ impl<'a> BitView<'a> {
 pub trait BitWriter {
   fn bit_offset(&self) -> usize;
   fn align(&mut self, byte_division: usize);
-  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&mut [u8; N], usize), MarshalRWError>;
-  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Result<&mut [u8], MarshalRWError>;
+  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&mut [u8; N], usize), MarshalError>;
+  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Result<&mut [u8], MarshalError>;
   fn advance(&mut self, bytes: usize, bits: usize);
   fn slice(&self) -> &[u8];
 
   #[inline(always)]
-  fn write_magic<const N: usize>(&mut self, magic: &[u8; N]) -> Result<(), MarshalRWError> {
+  fn write_magic<const N: usize>(&mut self, magic: &[u8; N]) -> Result<(), MarshalError> {
     self.align(1);
     match self.reserve_and_advance::<N>(N, 0) {
       Ok(buf) => {
@@ -154,7 +150,7 @@ impl<'a> BitWriter for BufferBitWriter<'a> {
   }
 
   #[inline(always)]
-  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&mut [u8; N], usize), MarshalRWError> {
+  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&mut [u8; N], usize), MarshalError> {
     // Remember - this is safe since we are map-ing. If anything is out of bounds, it will 
     // return None. This gives us a safe array type.
     let out = self.out.get_mut(self.offset_byte..self.offset_byte+N).map(|x| {
@@ -166,12 +162,12 @@ impl<'a> BitWriter for BufferBitWriter<'a> {
       self.offset_bit = (self.offset_bit + bits) % 8;
       Ok(out)
     } else {
-      Err(MarshalRWError::OutOfBounds)
+      Err(MarshalError::BufferTooSmall)
     }
   }
 
   #[inline(always)]
-  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Result<&mut [u8], MarshalRWError> {
+  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Result<&mut [u8], MarshalError> {
     self.align(1);
     let out = self.out.get_mut(self.offset_byte..self.offset_byte + bytes);
 
@@ -179,7 +175,7 @@ impl<'a> BitWriter for BufferBitWriter<'a> {
       self.offset_byte += bytes;
       Ok(out)
     } else {
-      Err(MarshalRWError::OutOfBounds)
+      Err(MarshalError::BufferTooSmall)
     }
   }
 
@@ -230,7 +226,7 @@ impl BitWriter for VecBitWriter {
   }
 
   #[inline(always)]
-  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&mut [u8; N], usize), MarshalRWError> {
+  fn reserve_and_advance<const N: usize>(&mut self, bytes: usize, bits: usize) -> Result<(&mut [u8; N], usize), MarshalError> {
     // Remember - this is safe since we are map-ing. If anything is out of bounds, it will 
     // return None. This gives us a safe array type.
     self.out.resize(self.offset_byte + N, 0x00);
@@ -243,12 +239,12 @@ impl BitWriter for VecBitWriter {
       self.offset_bit = (self.offset_bit + bits) % 8;
       Ok(out)
     } else {
-      Err(MarshalRWError::OutOfBounds)
+      Err(MarshalError::BufferTooSmall)
     }
   }
 
   #[inline(always)]
-  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Result<&mut [u8], MarshalRWError> {
+  fn reserve_and_advance_aligned_slice(&mut self, bytes: usize) -> Result<&mut [u8], MarshalError> {
     self.align(1);
     self.out.resize(self.offset_byte + bytes, 0x00);
     let out = self.out.get_mut(self.offset_byte..self.offset_byte + bytes);
@@ -257,7 +253,7 @@ impl BitWriter for VecBitWriter {
       self.offset_byte += bytes;
       Ok(out)
     } else {
-      Err(MarshalRWError::OutOfBounds)
+      Err(MarshalError::BufferTooSmall)
     }
   }
 
