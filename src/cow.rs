@@ -48,7 +48,7 @@ impl<'a> PartialEq for CowStr<'a> {
 impl<'a> Eq for CowStr<'a> {}
 
 #[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for CowStr<'de> { 
+impl<'de, 'a> serde::Deserialize<'de> for CowStr<'a> { 
   #[inline] 
   fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> 
   where 
