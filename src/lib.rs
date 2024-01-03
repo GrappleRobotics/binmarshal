@@ -222,7 +222,7 @@ impl<'dm> Demarshal<'dm, ()> for &'dm str {
 
 // Payload is all-consuming, there is no tagged length
 #[derive(Proxy)]
-pub struct Payload<'a>(&'a [u8]);
+pub struct Payload<'a>(pub &'a [u8]);
 
 impl<'a> Marshal<()> for Payload<'a> {
   fn write<W: BitWriter>(&self, writer: &mut W, _ctx: ()) -> Result<(), MarshalError> {
