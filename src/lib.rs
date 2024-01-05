@@ -7,6 +7,7 @@ extern crate alloc;
 pub mod rw;
 pub mod numeric;
 
+use bounded_static::IntoBoundedStatic;
 pub use rw::*;
 pub use numeric::*;
 
@@ -513,11 +514,6 @@ impl<'a, T: 'a + ToOwned + ?Sized> AsymmetricCow<'a, T> {
   pub fn to_mut(&mut self) -> &mut <T as ToOwned>::Owned {
     self.0.to_mut()
   }
-  
-  pub fn to_static(self) -> AsymmetricCow<'static, T> {
-    let inner = self.0.into_owned();
-    AsymmetricCow::<'static, T>(Cow::Owned(inner))
-  }
 }
 
 impl<'a, C, T: ToOwned + ?Sized + Marshal<C>> Marshal<C> for AsymmetricCow<'a, T> {
@@ -534,6 +530,14 @@ where
   fn read(view: &mut BitView<'dm>, ctx: C) -> Result<Self, MarshalError> {
     let t = <&T>::read(view, ctx)?;
     Ok(AsymmetricCow(alloc::borrow::Cow::Borrowed(t)))
+  }
+}
+
+impl<'a, T: 'static + ToOwned + ?Sized> IntoBoundedStatic for AsymmetricCow<'a, T> {
+  type Static = AsymmetricCow<'static, T>;
+
+  fn into_static(self) -> Self::Static {
+    AsymmetricCow::<'static, T>(self.0.into_static())
   }
 }
 
