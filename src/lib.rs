@@ -504,7 +504,7 @@ where
 }
 
 #[derive(Proxy)]
-pub struct AsymmetricCow<'a, T: 'a + ToOwned + ?Sized>(Cow<'a, T>);
+pub struct AsymmetricCow<'a, T: 'a + ToOwned + ?Sized>(pub Cow<'a, T>);
 
 impl<'a, T: 'a + ToOwned + ?Sized> AsymmetricCow<'a, T> {
   pub fn into_owned(self) -> <T as ToOwned>::Owned {
