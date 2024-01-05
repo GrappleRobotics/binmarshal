@@ -98,7 +98,7 @@ impl<'a> BitView<'a> {
     match end {
       Some(end) => {
         let out = Ok(&self.data[self.offset_byte..self.offset_byte + end]);
-        self.offset_byte += end;
+        self.offset_byte += end + 1;
         out
       },
       None => Err(MarshalError::ExpectedSentinel),
