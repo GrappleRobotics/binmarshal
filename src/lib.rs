@@ -9,11 +9,10 @@ pub mod numeric;
 
 pub use rw::*;
 pub use numeric::*;
-use schemars::JsonSchema;
 
 use core::{ops::{Deref, DerefMut}, result::Result, mem::MaybeUninit, marker::PhantomData, borrow::Borrow};
 
-use alloc::{string::String, borrow::Cow};
+use alloc::{string::String, borrow::Cow, borrow::ToOwned, vec::Vec};
 
 pub use binmarshal_macros::{Marshal, Demarshal, MarshalUpdate, Proxy};
 
@@ -359,7 +358,7 @@ macro_rules! make_referent {
     }
 
     #[cfg(feature = "schema")]
-    impl<$($generics),*> schemars::JsonSchema for $referent_name<$($generics),*> where $inner: JsonSchema {
+    impl<$($generics),*> schemars::JsonSchema for $referent_name<$($generics),*> where $inner: schemars::JsonSchema {
       fn schema_name() -> String {
         <$inner>::schema_name()
       }
@@ -378,7 +377,7 @@ macro_rules! make_referent {
     }
 
     #[cfg(feature = "schema")]
-    impl<$($generics),*> schemars::JsonSchema for $owned_name<$($generics),*> where $inner: ToOwned, <$inner as ToOwned>::Owned: JsonSchema {
+    impl<$($generics),*> schemars::JsonSchema for $owned_name<$($generics),*> where $inner: ToOwned, <$inner as ToOwned>::Owned: schemars::JsonSchema {
       fn schema_name() -> String {
         <$inner as ToOwned>::Owned::schema_name()
       }
