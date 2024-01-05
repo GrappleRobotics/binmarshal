@@ -1,14 +1,16 @@
+use std::borrow::Cow;
+
 use binmarshal::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Marshal, Demarshal)]
 #[marshal(tag_type = "u8")]
 pub enum SomeError<'a> {
   #[marshal(tag = "0")]
-  MyErrorVariant(CowStr<'a>)
+  MyErrorVariant(Cow<'a, str>)
 }
 
 fn main() {
-  let v = SomeError::<'static>::MyErrorVariant(CowStr::Borrowed("Hello World"));
+  let v = SomeError::<'static>::MyErrorVariant(Cow::Borrowed("Hello World"));
   let mut writer = VecBitWriter::new();
   v.write(&mut writer, ()).unwrap();
 

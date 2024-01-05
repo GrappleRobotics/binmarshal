@@ -579,11 +579,21 @@ pub fn derive_marshal_update(input: proc_macro::TokenStream) -> proc_macro::Toke
 
 // PROXY TYPES
 
-#[proc_macro_derive(Proxy)]
+#[derive(Debug, FromAttributes)]
+#[darling(attributes(proxy))]
+struct ProxyReceiver {
+  no_clone: Option<bool>
+}
+
+#[proc_macro_derive(Proxy, attributes(proxy))]
 pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
   let DeriveInput {
-    attrs: _, vis: _, ident, generics, data
+    attrs, vis: _, ident, generics, data
   } = parse_macro_input!(input as DeriveInput);
+
+  let attrs = ProxyReceiver::from_attributes(&attrs).unwrap();
+
+  let clone = !(attrs.no_clone == Some(true));
 
   let _generics_inner = &generics.params;
 
@@ -648,10 +658,6 @@ pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
               fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { self.0.fmt(f) }
             }
 
-            impl #generics Clone for #ident #ident_generics where #ft: Clone {
-              fn clone(&self) -> Self { Self(self.0.clone(),#(#extra_clone),*) }
-            }
-
             impl #generics PartialEq for #ident #ident_generics where #ft: PartialEq {
                #[inline]
                 fn eq(&self, other: &Self) -> bool {
@@ -665,6 +671,16 @@ pub fn derive_proxy(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
             impl #generics Eq for #ident #ident_generics where #ft: Eq { }
           };
+
+          if clone {
+            out = quote!{
+              #out
+
+              impl #generics Clone for #ident #ident_generics where #ft: Clone {
+                fn clone(&self) -> Self { Self(self.0.clone(),#(#extra_clone),*) }
+              }
+            }
+          }
 
           #[cfg(feature = "serde")]
           {
