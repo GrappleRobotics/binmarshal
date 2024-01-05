@@ -7,7 +7,7 @@ extern crate alloc;
 pub mod rw;
 pub mod numeric;
 
-use bounded_static::IntoBoundedStatic;
+use bounded_static::{IntoBoundedStatic, ToBoundedStatic};
 pub use rw::*;
 pub use numeric::*;
 
@@ -538,6 +538,14 @@ impl<'a, T: 'static + ToOwned + ?Sized> IntoBoundedStatic for AsymmetricCow<'a, 
 
   fn into_static(self) -> Self::Static {
     AsymmetricCow::<'static, T>(self.0.into_static())
+  }
+}
+
+impl<'a, T: 'static + ToOwned + ?Sized> ToBoundedStatic for AsymmetricCow<'a, T> {
+  type Static = AsymmetricCow<'static, T>;
+
+  fn to_static(&self) -> Self::Static {
+    AsymmetricCow::<'static, T>(self.0.to_static())
   }
 }
 
