@@ -96,7 +96,11 @@ impl<'a> BitView<'a> {
     self.align(1);
     let end = (&self.data[self.offset_byte..]).into_iter().position(|x| *x == sentinel);
     match end {
-      Some(end) => Ok(&self.data[self.offset_byte..self.offset_byte + end]),
+      Some(end) => {
+        let out = Ok(&self.data[self.offset_byte..self.offset_byte + end]);
+        self.offset_byte += end;
+        out
+      },
       None => Err(MarshalError::ExpectedSentinel),
     }
   }
