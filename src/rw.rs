@@ -116,6 +116,19 @@ impl<'a> BitView<'a> {
     self.offset_byte += (self.offset_bit + bits) / 8 + bytes;
     self.offset_bit = (self.offset_bit + bits) % 8;
   }
+
+  #[inline(always)]
+  pub fn offset(&self) -> (usize, usize) {
+    (self.offset_byte, self.offset_bit)
+  }
+
+  #[inline(always)]
+  pub fn offset_for_drain(&self) -> usize {
+    match self.offset_bit {
+      0 => self.offset_byte,
+      _ => self.offset_byte + 1
+    }
+  }
 }
 
 pub trait BitWriter {
